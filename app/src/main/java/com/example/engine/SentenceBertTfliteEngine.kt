@@ -281,14 +281,17 @@ class SentenceBertTfliteEngine(
             val channel = inputStream.channel
             val modelBuffer = channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
 
-            val options = Interpreter.Options().apply {
-                setNumThreads(4)
-                setUseXNNPACK(true)
-            }
-            interpreter = Interpreter(modelBuffer, options)
+            val accelerated = TfliteGpuAccelerator.createInterpreter(
+                context = context,
+                model = modelBuffer,
+                modelToken = "sentence_bert_minilm_v1",
+                cpuThreads = 4
+            ) ?: throw IllegalStateException("Unable to create TFLite interpreter")
+            interpreter = accelerated.interpreter
+            gpuDelegate = accelerated.gpuDelegate
+            activeBackend = accelerated.backend
             isTfliteModelLoaded = true
-            activeBackend = ExecutionBackend.CPU_XNNPACK
-            Log.i(TAG, "Sentence-BERT ONNX-TFLite model initialized successfully.")
+            Log.i(TAG, "Sentence-BERT ONNX-TFLite model initialized on ${activeBackend.displayName}.")
         } catch (_: Exception) {
             Log.i(TAG, "No sentence_bert_minilm.tflite asset found. Running ONNX Sentence-BERT Transformer mean-pooling pipeline.")
             isTfliteModelLoaded = false

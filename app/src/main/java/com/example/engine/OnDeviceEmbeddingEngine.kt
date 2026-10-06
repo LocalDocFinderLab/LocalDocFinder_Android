@@ -33,6 +33,7 @@ class OnDeviceEmbeddingEngine(
         private const val TAG = "DocuVectorEngine"
         private const val DEFAULT_ASSET_MODEL = "models/embedding_model.tflite"
         const val DEFAULT_BATCH_SIZE = 8
+        private const val GPU_MODEL_TOKEN = "docuvector_embedding_v1"
     }
 
     private val tokenizer = Tokenizer(maxSequenceLength = maxSeqLength)
@@ -41,6 +42,7 @@ class OnDeviceEmbeddingEngine(
     private var gpuDelegate: GpuDelegate? = null
     private var currentBackend: ExecutionBackend = ExecutionBackend.CPU_XNNPACK
     private var isUsingTfliteModel: Boolean = false
+    private var modelBuffer: ByteBuffer? = null
 
     init {
         initializeEngine()
@@ -94,7 +96,19 @@ class OnDeviceEmbeddingEngine(
                         }
                         continue
                     } catch (e: Exception) {
-                        Log.w(TAG, "TFLite single-tensor batch inference failed (${e.message}), falling back to deterministic projection")
+                        if (currentBackend == ExecutionBackend.GPU_DELEGATE) {
+                            Log.w(TAG, "GPU inference failed (${e.message}); rebuilding interpreter on CPU and retrying")
+                            fallBackToCpu()
+                            try {
+                                allResults.addAll(runTfliteBatchInference(batchEncodings))
+                                HardwareMonitor.lastLatencyMs.value = System.currentTimeMillis() - startTime
+                                continue
+                            } catch (e2: Exception) {
+                                Log.w(TAG, "CPU retry failed (${e2.message}), falling back to deterministic projection")
+                            }
+                        } else {
+                            Log.w(TAG, "TFLite single-tensor batch inference failed (${e.message}), falling back to deterministic projection")
+                        }
                     }
                 }
 
@@ -188,9 +202,10 @@ class OnDeviceEmbeddingEngine(
 
     @Synchronized
     private fun initializeEngine() {
-        val modelBuffer = loadModelFromAssets(DEFAULT_ASSET_MODEL)
-        if (modelBuffer != null) {
-            setupInterpreterWithDelegates(modelBuffer)
+        val loaded = loadModelFromAssets(DEFAULT_ASSET_MODEL)
+        modelBuffer = loaded
+        if (loaded != null) {
+            setupInterpreterWithDelegates(loaded)
         } else {
             Log.i(TAG, "No preloaded .tflite model in assets; using built-in on-device semantic projection engine.")
             currentBackend = ExecutionBackend.CPU_XNNPACK
@@ -293,34 +308,36 @@ class OnDeviceEmbeddingEngine(
             Log.w(TAG, "Qualcomm QNN Delegate unavailable (${e.message}), falling back to GPU Delegate.")
         }
 
-        // 2. Fallback to GPU Delegate (OpenCL / Vulkan)
-        try {
-            val delegate = try {
-                val optClass = Class.forName("org.tensorflow.lite.gpu.GpuDelegate\$Options")
-                val opt = optClass.getDeclaredConstructor().newInstance()
-                try {
-                    optClass.getMethod("setPrecisionLossAllowed", Boolean::class.javaPrimitiveType).invoke(opt, true)
-                } catch (_: Exception) {}
-                GpuDelegate::class.java.getConstructor(optClass).newInstance(opt)
-            } catch (_: Throwable) {
-                GpuDelegate()
-            }
-            gpuDelegate = delegate
-            val options = Interpreter.Options().apply {
-                addDelegate(delegate)
-            }
-            interpreter = Interpreter(buffer, options)
-            currentBackend = ExecutionBackend.GPU_DELEGATE
-            isUsingTfliteModel = true
-            Log.i(TAG, "Successfully initialized with GPU Delegate.")
-            return
-        } catch (e: Throwable) {
-            Log.w(TAG, "GPU Delegate unavailable (${e.message}), falling back to CPU XNNPACK.")
-            gpuDelegate?.close()
-            gpuDelegate = null
-        }
+        // 2. GPU delegate (compatibility-checked, serialized kernel cache), else CPU XNNPACK
+        initGpuOrCpuInterpreter(buffer)
+    }
 
-        // 3. Fallback to CPU with XNNPACK and core topology tuning
+    private fun initGpuOrCpuInterpreter(buffer: ByteBuffer) {
+        val accelerated = TfliteGpuAccelerator.createInterpreter(
+            context = context,
+            model = buffer,
+            modelToken = GPU_MODEL_TOKEN,
+            cpuThreads = pixelOptimizer.currentProfile.value.recommendedCpuThreads
+        )
+        if (accelerated == null) {
+            interpreter = null
+            isUsingTfliteModel = false
+            return
+        }
+        interpreter = accelerated.interpreter
+        gpuDelegate = accelerated.gpuDelegate
+        currentBackend = accelerated.backend
+        isUsingTfliteModel = true
+    }
+
+    /** Called when GPU inference fails at runtime (e.g. dynamic-shape resize): rebuild on CPU. */
+    @Synchronized
+    private fun fallBackToCpu() {
+        val buffer = modelBuffer ?: return
+        try { interpreter?.close() } catch (_: Throwable) {}
+        try { gpuDelegate?.close() } catch (_: Throwable) {}
+        gpuDelegate = null
+        interpreter = null
         initCpuXnnpackInterpreter(buffer)
     }
 
