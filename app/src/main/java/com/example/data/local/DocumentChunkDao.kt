@@ -29,6 +29,20 @@ data class IndexedFileStamp(
     val lastIndexed: Long
 )
 
+/**
+ * Lightweight projection for document browsing without loading massive embeddingBlobs into CursorWindow.
+ */
+data class DocumentSummary(
+    val id: Long,
+    val fileUri: String,
+    val fileName: String,
+    val chunkIndex: Int,
+    val chunkText: String,
+    val timestamp: Long,
+    val tags: String,
+    val metadata: String
+)
+
 @Dao
 interface DocumentChunkDao {
 
@@ -100,6 +114,13 @@ interface DocumentChunkDao {
 
     @Query("SELECT * FROM documents")
     suspend fun getAllChunks(): List<DocumentChunkEntity>
+
+    /**
+     * Retrieves lightweight chunk summaries grouped by file without fetching heavy embedding blobs.
+     * Prevents SQLite CursorWindow overflow and OutOfMemoryError on larger document collections.
+     */
+    @Query("SELECT id, fileUri, fileName, chunkIndex, chunkText, timestamp, tags, metadata FROM documents GROUP BY fileUri")
+    suspend fun getDocumentSummaries(): List<DocumentSummary>
 
     @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id IN (:chunkIds)")
     suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>

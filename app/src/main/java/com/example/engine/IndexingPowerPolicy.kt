@@ -67,7 +67,8 @@ object IndexingPowerPolicy {
         val isUserPaused: Boolean = false,
         /** Manual "Full speed" override chosen by the user. */
         val forceFullSpeed: Boolean = false,
-        val cores: Int = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
+        val cores: Int = Runtime.getRuntime().availableProcessors().coerceAtLeast(2),
+        val isLowMemory: Boolean = (Runtime.getRuntime().maxMemory() / (1024 * 1024)) <= 256
     )
 
     data class Speed(
@@ -108,6 +109,10 @@ object IndexingPowerPolicy {
     /** Pure decision function: no Android state is read here. */
     fun decide(inputs: Inputs): Speed {
         val cores = inputs.cores.coerceAtLeast(2)
+        val maxParallel = if (inputs.isLowMemory) 1 else MAX_PARALLEL_FILES
+        val maxBatch = if (inputs.isLowMemory) 8 else 16
+        val maxThreads = if (inputs.isLowMemory) (cores - 1).coerceIn(2, 4) else (cores - 1).coerceAtLeast(3)
+
         return when {
             inputs.isUserPaused ->
                 Speed(Mode.PAUSED, Reason.USER_PAUSED, 0, 1, 100L, 1, 1)
@@ -120,10 +125,10 @@ object IndexingPowerPolicy {
             inputs.forceFullSpeed ->
                 Speed(
                     Mode.FULL_SPEED, Reason.USER_FORCED, 100,
-                    batchSize = 16,
+                    batchSize = maxBatch,
                     interBatchDelayMs = 0L,
-                    cpuThreads = (cores - 1).coerceAtLeast(3),
-                    parallelFiles = (cores / 3).coerceIn(1, MAX_PARALLEL_FILES)
+                    cpuThreads = maxThreads,
+                    parallelFiles = (cores / 3).coerceIn(1, maxParallel)
                 )
 
             inputs.thermalStatus >= THERMAL_MODERATE ->
@@ -135,10 +140,10 @@ object IndexingPowerPolicy {
             inputs.isCharging && !inputs.isUserActive ->
                 Speed(
                     Mode.TURBO, Reason.NONE, 100,
-                    batchSize = 16,
+                    batchSize = maxBatch,
                     interBatchDelayMs = 0L,
-                    cpuThreads = (cores - 1).coerceAtLeast(3),
-                    parallelFiles = (cores / 3).coerceIn(1, MAX_PARALLEL_FILES)
+                    cpuThreads = maxThreads,
+                    parallelFiles = (cores / 3).coerceIn(1, maxParallel)
                 )
 
             inputs.isCharging ->
