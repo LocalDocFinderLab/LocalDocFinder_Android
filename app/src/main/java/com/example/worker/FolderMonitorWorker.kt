@@ -203,6 +203,11 @@ class FolderMonitorWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.example.worker.IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping.")
+            return@withContext Result.success(workDataOf(KEY_SCAN_MESSAGE to "Skipped: indexing is stopped"))
+        }
+
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager?.isPowerSaveMode == true) {
             Log.i(TAG, "Device is in Power Saving Mode. Skipping folder monitoring scan.")
@@ -253,15 +258,8 @@ class FolderMonitorWorker(
 
             val candidateFiles = candidateFilesMap.values.toList()
 
-            // 2. Fetch existing indexed chunks and build timestamp map for change detection
-            val allIndexedChunks = dao.getAllChunks()
-            val indexedTimestampMap = HashMap<String, Long>()
-            for (chunk in allIndexedChunks) {
-                val currentTs = indexedTimestampMap[chunk.fileUri] ?: 0L
-                if (chunk.timestamp > currentTs) {
-                    indexedTimestampMap[chunk.fileUri] = chunk.timestamp
-                }
-            }
+            // 2. Last-indexed timestamp per file for change detection (a tiny GROUP BY query: no chunk text or embeddings are loaded)
+            val indexedTimestampMap = dao.getIndexedFileStamps().associate { it.fileUri to (it.lastIndexed) }
 
             // 3. Detect new files or files whose modification time is newer than saved timestamp
             val filesToProcess = candidateFiles.filter { docFile ->
@@ -301,6 +299,15 @@ class FolderMonitorWorker(
                             "percent" to pct,
                             "is_running" to true
                         )
+                    )
+
+                    // Only shown while there is real work: idle background checks never touch the status bar.
+                    IndexingNotifier.show(
+                        context,
+                        IndexingNotifier.ID_FOLDER_SCAN,
+                        "Indexing new documents",
+                        "$fileName (${idx + 1}/$totalToProcess)",
+                        (idx * 100) / totalToProcess
                     )
 
                     Log.i(TAG, "Auto-embedding detected new/updated file: $fileName")
@@ -343,9 +350,13 @@ class FolderMonitorWorker(
                     KEY_SCAN_MESSAGE to statusMsg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in folder monitor worker: ${e.message}", e)
             Result.retry()
+        } finally {
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_FOLDER_SCAN)
         }
     }
 }

@@ -16,21 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,92 +31,50 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.repository.DocumentRepository
 import com.example.engine.KeywordHighlighter
 import com.example.engine.SearchMode
 import com.example.engine.SearchResult
-import kotlinx.coroutines.delay
 import java.util.Locale
 
 /**
- * A highly-responsive real-time search results list.
- * Reactively runs keyword-based SQLite FTS5 matching on the Room database as the user types,
- * highlighting matching terms dynamically.
+ * Search results list for SQLite FTS (keyword) results ranked by semantic relevance.
+ *
+ * Purely presentational: the results and loading flag come from [com.example.ui.MainViewModel], so
+ * ranking, filters and sort order are applied in one place. Renders one of three states:
+ * - shimmer skeleton while the engine is still processing the query,
+ * - [SearchEmptyState] (illustration + tips) when nothing matches,
+ * - the result rows.
  */
 @Composable
 fun SearchResultList(
     query: String,
-    repository: DocumentRepository,
+    results: List<SearchResult>,
+    isSearching: Boolean,
     onResultClick: (SearchResult) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    searchMode: SearchMode = SearchMode.KEYWORD,
+    hasActiveFilters: Boolean = false,
+    onSwitchToHybrid: () -> Unit = {},
+    onClearFilters: () -> Unit = {},
+    onAddDocuments: (() -> Unit)? = null
 ) {
-    var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
-
-    LaunchedEffect(query) {
-        if (query.isBlank()) {
-            results = emptyList()
-            isSearching = false
-            return@LaunchedEffect
-        }
-        isSearching = true
-        // Small delay (150ms) to debounce keyboard input and prevent thread blocking as user types in real-time
-        delay(150)
-        try {
-            // Force KEYWORD mode to invoke Room FTS matcher pipeline
-            results = repository.search(query, SearchMode.KEYWORD, topK = 40)
-        } catch (e: Exception) {
-            results = emptyList()
-        } finally {
-            isSearching = false
-        }
-    }
-
     Column(modifier = modifier.fillMaxWidth()) {
-        if (isSearching) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .testTag("fts_realtime_searching_indicator"),
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 3.dp
-                )
-            }
-        } else if (results.isEmpty() && query.isNotBlank()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.FindInPage,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.size(44.dp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "No FTS matches for \"$query\"",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        } else if (query.isNotBlank()) {
-            LazyColumn(
+        when {
+            results.isEmpty() && isSearching -> SearchResultsShimmer()
+            results.isEmpty() && query.isNotBlank() -> SearchEmptyState(
+                query = query,
+                searchMode = searchMode,
+                hasActiveFilters = hasActiveFilters,
+                onSwitchToHybrid = onSwitchToHybrid,
+                onClearFilters = onClearFilters,
+                onAddDocuments = onAddDocuments
+            )
+            results.isNotEmpty() -> LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("fts_realtime_results_list"),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
             ) {
                 items(
                     items = results,
@@ -205,7 +154,13 @@ fun SearchResultRow(
                         maxLines = 1
                     )
                     Text(
-                        text = "Chunk #${result.chunkIndex + 1} • BM25 Score: %.2f".format(result.bm25Score),
+                        text = buildString {
+                            append("Chunk #${result.chunkIndex + 1}")
+                            if (result.cosineSimilarity > 0f) {
+                                append(" • Semantic ${(result.cosineSimilarity * 100).toInt()}%")
+                            }
+                            append(" • BM25 %.2f".format(result.bm25Score))
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

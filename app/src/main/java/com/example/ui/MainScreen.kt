@@ -126,8 +126,8 @@ import com.example.ui.components.AppNavigationDrawerContent
 import com.example.ui.components.AppUpdateBanner
 import com.example.ui.components.AppUpdateSheet
 import com.example.ui.components.ChatBackupSheet
-import com.example.ui.components.DocumentPreviewSheet
-import com.example.ui.components.FileObserverStatusIndicator
+import com.example.ui.components.DocumentDetailSheet
+import com.example.ui.components.BackgroundScanBanner
 import com.example.ui.components.FtsDocumentSearchComponent
 import com.example.ui.components.HardwareDashboardSheet
 import com.example.ui.components.IndexingStatusCard
@@ -179,6 +179,8 @@ fun MainScreen(
     val isGamingModePaused by viewModel.isGamingModePaused.collectAsStateWithLifecycle()
     val includeChatBackups by viewModel.includeChatBackups.collectAsStateWithLifecycle()
     val chatIndexingProgress by viewModel.chatIndexingProgress.collectAsStateWithLifecycle()
+    val isIndexingActive by viewModel.isIndexingActive.collectAsStateWithLifecycle()
+    val isIndexingStoppedByUser by viewModel.isIndexingStoppedByUser.collectAsStateWithLifecycle()
 
     val isMultiSelectMode by viewModel.isMultiSelectMode.collectAsStateWithLifecycle()
     val selectedDocumentUris by viewModel.selectedDocumentUris.collectAsStateWithLifecycle()
@@ -772,7 +774,23 @@ fun MainScreen(
                             totalFiles = totalFiles,
                             totalChunks = totalChunks,
                             indexingState = indexingState,
-                            onStopIndexingClick = { viewModel.stopIndexing() },
+                            onStopIndexingClick = {
+                                viewModel.stopIndexing()
+                                Toast.makeText(context, "Indexing stopped", Toast.LENGTH_SHORT).show()
+                            },
+                            isIndexingActive = isIndexingActive,
+                            isStoppedByUser = isIndexingStoppedByUser,
+                            autoScanEnabled = fileObserverStatus.isMonitoringActive,
+                            onToggleAutoScan = { viewModel.setAutoScanEnabled(it) },
+                            lastScanMessage = fileObserverStatus.lastScanMessage,
+                            onStartIndexingClick = {
+                                // Clear the "stopped" flag first so a permission prompt that is granted later still crawls
+                                viewModel.allowIndexing()
+                                requestStoragePermissionsAndCrawl {
+                                    viewModel.startAllIndexing()
+                                    Toast.makeText(context, "Indexing started", Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
 
@@ -887,26 +905,27 @@ fun MainScreen(
                                 }
                                 context.startActivity(overlayIntent)
                             },
-                            focusRequester = searchFocusRequester,
-                            repository = viewModel.repository
+                            focusRequester = searchFocusRequester
                         )
                     }
                 }
 
-                // Floating FileObserver & WorkManager Task Status Indicator
-                FileObserverStatusIndicator(
+                // Background scan banner: only visible while a scan is indexing files, then it goes away
+                BackgroundScanBanner(
                     status = fileObserverStatus,
-                    onTriggerScan = { viewModel.triggerImmediateFileObserverScan() },
-                    onToggleMonitoring = { viewModel.toggleFileObserverMonitoring() },
+                    onStop = {
+                        viewModel.stopIndexing()
+                        Toast.makeText(context, "Indexing stopped", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
         }
     }
 
-    // In-App Document Preview Modal Bottom Sheet
+    // Read-only, expandable document detail sheet (full content + metadata) opened from any search result
     selectedPreview?.let { preview ->
-        DocumentPreviewSheet(
+        DocumentDetailSheet(
             result = preview,
             repository = viewModel.repository,
             searchQuery = query,

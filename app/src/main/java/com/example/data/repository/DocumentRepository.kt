@@ -41,6 +41,29 @@ data class DocumentPreviewContent(
     val imageBitmap: Bitmap? = null
 )
 
+/** One chunk of an indexed document with the overlap shared with the previous chunk trimmed away. */
+data class DocumentDetailChunk(
+    val chunkIndex: Int,
+    val text: String
+)
+
+/**
+ * Read-only view of an indexed document: its stored content plus metadata, for the detail sheet.
+ */
+data class DocumentDetail(
+    val fileUri: String,
+    val fileName: String,
+    val chunks: List<DocumentDetailChunk>,
+    val totalCharacters: Int,
+    val wordCount: Int,
+    val indexedAtMillis: Long,
+    val sourceModifiedMillis: Long?,
+    val sizeBytes: Long?,
+    val mimeType: String?,
+    val location: String,
+    val tags: List<String>
+)
+
 class DocumentRepository(
     private val context: Context
 ) {
@@ -128,9 +151,30 @@ class DocumentRepository(
         topK: Int = 30,
         filterTag: String? = null,
         fileTypeFilter: String? = null,
-        sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE
+        sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE,
+        semanticScoring: Boolean = true
     ): List<SearchResult> {
-        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder)
+        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring)
+    }
+
+    /**
+     * Embeds a search query with the active embedding model (same model used for the stored chunk vectors).
+     */
+    suspend fun embedQuery(query: String): FloatArray = modelManager.embedText(query, isQuery = true)
+
+    /**
+     * Loads only the (quantized) embedding BLOBs for the given chunk ids.
+     * Batched to stay below SQLite's bound-variable limit.
+     */
+    suspend fun loadEmbeddingBlobs(chunkIds: List<Long>): Map<Long, ByteArray> = withContext(Dispatchers.IO) {
+        if (chunkIds.isEmpty()) return@withContext emptyMap()
+        val blobs = HashMap<Long, ByteArray>(chunkIds.size)
+        for (batch in chunkIds.distinct().chunked(500)) {
+            for (row in dao.getEmbeddingsForChunkIds(batch)) {
+                blobs[row.id] = row.embeddingBlob
+            }
+        }
+        blobs
     }
 
     /**
@@ -142,6 +186,23 @@ class DocumentRepository(
     ): IndexDocResult = withContext(Dispatchers.IO) {
         val fileName = docFile.name ?: "Unknown"
         val fileUri = docFile.uri.toString()
+
+        // Unchanged since it was last indexed: skip the expensive parse + embedding entirely.
+        // Chunks store the source file's modified time, so equal-or-older means nothing changed.
+        val sourceModified = docFile.lastModified()
+        if (sourceModified > 0L) {
+            val stamp = dao.getFileIndexStamp(fileUri)
+            val lastIndexed = stamp.lastIndexed
+            if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed) {
+                onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
+                return@withContext IndexDocResult(
+                    fileName = fileName,
+                    fileUri = fileUri,
+                    isSuccess = true,
+                    chunksIndexed = stamp.chunkCount
+                )
+            }
+        }
 
         onSubProgress?.invoke("Parsing $fileName…", 0, 100)
         val parseResult = documentParser.parseDocumentSafely(docFile)
@@ -161,11 +222,13 @@ class DocumentRepository(
 
         val chunksToEmbed = mutableListOf<com.example.engine.ParsedChunk>()
         val finalEntities = mutableListOf<DocumentChunkEntity>()
+        val fileTimestamp = if (sourceModified > 0) sourceModified else System.currentTimeMillis()
 
         for (chunk in parsed.chunks) {
             val existing = existingHashMap[chunk.hash]
             if (existing != null) {
-                finalEntities.add(existing)
+                // Reused chunk: refresh its timestamp, otherwise a touched-but-unchanged file looks modified forever.
+                finalEntities.add(existing.copy(timestamp = fileTimestamp))
             } else {
                 chunksToEmbed.add(chunk)
             }
@@ -208,7 +271,7 @@ class DocumentRepository(
                             chunkIndex = c.index,
                             chunkText = c.text,
                             hash = c.hash,
-                            timestamp = if (docFile.lastModified() > 0) docFile.lastModified() else System.currentTimeMillis(),
+                            timestamp = fileTimestamp,
                             embeddingBlob = blob
                         )
                     )
@@ -232,6 +295,61 @@ class DocumentRepository(
     suspend fun indexDocument(docFile: DocumentFile, onProgress: ((Int, Int) -> Unit)? = null): Int {
         val result = indexDocumentSafely(docFile) { _, cur, tot -> onProgress?.invoke(cur, tot) }
         return result.chunksIndexed
+    }
+
+    /**
+     * Loads the full indexed content and metadata of a document from the local index (no file access needed
+     * for the text, so it works even if the original file has since been moved or deleted).
+     */
+    suspend fun loadDocumentDetail(fileUriStr: String, fileName: String): DocumentDetail = withContext(Dispatchers.IO) {
+        val dbChunks = dao.getChunksForFile(fileUriStr)
+        val stitchedTexts = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
+        val chunks = dbChunks.mapIndexed { i, c -> DocumentDetailChunk(c.chunkIndex, stitchedTexts[i]) }
+        val fullText = chunks.joinToString(" ") { it.text }
+
+        val uri = Uri.parse(fileUriStr)
+        var sizeBytes: Long? = null
+        var modifiedMillis: Long? = null
+        try {
+            if (uri.scheme == "file") {
+                val f = File(uri.path ?: "")
+                if (f.exists()) {
+                    sizeBytes = f.length()
+                    modifiedMillis = f.lastModified().takeIf { it > 0L }
+                }
+            } else {
+                DocumentFile.fromSingleUri(context, uri)?.takeIf { it.exists() }?.let {
+                    sizeBytes = it.length().takeIf { len -> len > 0L }
+                    modifiedMillis = it.lastModified().takeIf { ts -> ts > 0L }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val mime = try {
+            context.contentResolver.getType(uri)
+        } catch (_: Exception) {
+            null
+        }
+
+        val dbTags = dao.getTagsForFile(fileUriStr)
+        val tags = dbTags.ifEmpty {
+            dbChunks.firstOrNull()?.tags?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+        }
+
+        DocumentDetail(
+            fileUri = fileUriStr,
+            fileName = fileName,
+            chunks = chunks,
+            totalCharacters = fullText.length,
+            wordCount = if (fullText.isBlank()) 0 else fullText.trim().split(Regex("""\s+""")).size,
+            indexedAtMillis = dbChunks.maxOfOrNull { it.timestamp } ?: 0L,
+            sourceModifiedMillis = modifiedMillis,
+            sizeBytes = sizeBytes,
+            mimeType = mime,
+            location = if (uri.scheme == "file") (uri.path ?: fileUriStr) else Uri.decode(fileUriStr),
+            tags = tags
+        )
     }
 
     /**
