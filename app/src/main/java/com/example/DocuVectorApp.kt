@@ -20,6 +20,13 @@ class DocuVectorApp : Application(), Configuration.Provider {
         createNotificationChannel()
         com.example.updater.worker.AppUpdateCheckWorker.ensureNotificationChannel(this)
         try {
+            // Track charging / screen-idle / thermal state so the indexer can go full-throttle when
+            // the phone is charging and unused, and slow down the moment the user picks it up.
+            com.example.engine.IndexingPowerPolicy.start(this)
+        } catch (e: Throwable) {
+            Log.w("DocuVectorApp", "Indexing power policy unavailable: ${e.message}")
+        }
+        try {
             // Background indexing stays off if the user stopped it; "Start indexing" re-schedules it.
             if (!com.example.worker.IndexingController.isStoppedByUser(this)) {
                 com.example.worker.ContinuousSyncWorker.scheduleContinuousSync(this)

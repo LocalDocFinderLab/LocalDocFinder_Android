@@ -43,6 +43,7 @@ class OnDeviceEmbeddingEngine(
     private var currentBackend: ExecutionBackend = ExecutionBackend.CPU_XNNPACK
     private var isUsingTfliteModel: Boolean = false
     private var modelBuffer: ByteBuffer? = null
+    private var cpuThreadsInUse: Int = 0
 
     init {
         initializeEngine()
@@ -67,17 +68,23 @@ class OnDeviceEmbeddingEngine(
         if (texts.isEmpty()) return@withContext emptyList()
         val allResults = ArrayList<FloatArray>(texts.size)
 
-        // Dynamic thermal adaptation: On Pixel Tensor devices, throttle batch size and pace execution
-        // if thermal status warns of high junction temperatures.
-        val profile = pixelOptimizer.currentProfile.value
-        val effectiveBatchSize = minOf(batchSize, profile.recommendedBatchSize)
-        val interBatchDelay = profile.recommendedInterBatchDelayMs
-
-        for (i in texts.indices step effectiveBatchSize) {
+        var offset = 0
+        while (offset < texts.size) {
             // Check if user paused indexing for gaming or other high-intensity tasks
             HardwareMonitor.checkPausePoint()
 
-            val batchTexts = texts.subList(i, minOf(i + effectiveBatchSize, texts.size))
+            // Re-read the live power policy for every batch: full throttle while charging and idle,
+            // gentler as soon as the user is active, on battery or the device warms up. The Pixel
+            // thermal profile can only add pacing on top, never remove it.
+            val speed = IndexingPowerPolicy.current()
+            val pixelProfile = pixelOptimizer.currentProfile.value
+            val effectiveBatchSize = minOf(batchSize, speed.batchSize).coerceAtLeast(1)
+            val interBatchDelay = maxOf(speed.interBatchDelayMs, pixelProfile.recommendedInterBatchDelayMs)
+            ensureCpuThreads(speed.cpuThreads)
+
+            val end = minOf(offset + effectiveBatchSize, texts.size)
+            val batchTexts = texts.subList(offset, end)
+            offset = end
             val batchEncodings = batchTexts.map { tokenizer.encode(it, padToMaxLength = true) }
 
             val interp = interpreter
@@ -317,7 +324,7 @@ class OnDeviceEmbeddingEngine(
             context = context,
             model = buffer,
             modelToken = GPU_MODEL_TOKEN,
-            cpuThreads = pixelOptimizer.currentProfile.value.recommendedCpuThreads
+            cpuThreads = IndexingPowerPolicy.current().cpuThreads
         )
         if (accelerated == null) {
             interpreter = null
@@ -327,6 +334,9 @@ class OnDeviceEmbeddingEngine(
         interpreter = accelerated.interpreter
         gpuDelegate = accelerated.gpuDelegate
         currentBackend = accelerated.backend
+        if (accelerated.backend == ExecutionBackend.CPU_XNNPACK) {
+            cpuThreadsInUse = IndexingPowerPolicy.current().cpuThreads
+        }
         isUsingTfliteModel = true
     }
 
@@ -343,12 +353,13 @@ class OnDeviceEmbeddingEngine(
 
     private fun initCpuXnnpackInterpreter(buffer: ByteBuffer) {
         try {
-            val cpuThreads = pixelOptimizer.currentProfile.value.recommendedCpuThreads
+            val cpuThreads = IndexingPowerPolicy.current().cpuThreads
             val options = Interpreter.Options().apply {
                 setNumThreads(cpuThreads)
                 setUseXNNPACK(true)
             }
             interpreter = Interpreter(buffer, options)
+            cpuThreadsInUse = cpuThreads
             currentBackend = ExecutionBackend.CPU_XNNPACK
             isUsingTfliteModel = true
             Log.i(TAG, "Successfully initialized with CPU XNNPACK ($cpuThreads threads).")
@@ -356,6 +367,32 @@ class OnDeviceEmbeddingEngine(
             Log.e(TAG, "Failed to initialize TFLite interpreter on CPU: ${e.message}", e)
             interpreter = null
             isUsingTfliteModel = false
+        }
+    }
+
+    /**
+     * CPU fallback only: rebuilds the interpreter when the power policy asks for a different thread
+     * count (e.g. all cores while charging & idle, 2 threads once the user picks up the phone).
+     * GPU / NPU delegates are unaffected; they already run at sustained speed.
+     */
+    @Synchronized
+    private fun ensureCpuThreads(threads: Int) {
+        val buffer = modelBuffer ?: return
+        if (currentBackend != ExecutionBackend.CPU_XNNPACK || !isUsingTfliteModel) return
+        if (threads == cpuThreadsInUse) return
+        // Record the request first so a failing rebuild isn't retried on every batch.
+        cpuThreadsInUse = threads
+        try {
+            val options = Interpreter.Options().apply {
+                setNumThreads(threads)
+                setUseXNNPACK(true)
+            }
+            val fresh = Interpreter(buffer, options)
+            interpreter?.close()
+            interpreter = fresh
+            Log.i(TAG, "CPU XNNPACK interpreter re-tuned to $threads threads.")
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not re-tune CPU threads to $threads: ${e.message}")
         }
     }
 
