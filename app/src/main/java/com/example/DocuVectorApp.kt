@@ -17,6 +17,13 @@ class DocuVectorApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                com.example.engine.FailedDocumentRegistry.handleUncaughtCrash(this, throwable)
+            } catch (_: Throwable) {}
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
         try {
             com.example.engine.FailedDocumentRegistry.init(this)
         } catch (e: Throwable) {

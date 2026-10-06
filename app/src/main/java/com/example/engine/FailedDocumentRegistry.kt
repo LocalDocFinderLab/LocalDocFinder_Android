@@ -140,6 +140,7 @@ object FailedDocumentRegistry {
 
     /**
      * Marks the beginning of indexing for [fileUri] (in-flight crash canary).
+     * Synchronously committed so it is recorded immediately even if an immediate OOM or native crash occurs.
      */
     fun markProcessingStart(context: Context, fileUri: String, fileName: String) {
         val app = context.applicationContext ?: context
@@ -147,7 +148,7 @@ object FailedDocumentRegistry {
             .putString(KEY_IN_PROGRESS_URI, fileUri)
             .putString(KEY_IN_PROGRESS_NAME, fileName)
             .putLong(KEY_IN_PROGRESS_TIME, System.currentTimeMillis())
-            .apply()
+            .commit()
     }
 
     /**
@@ -162,7 +163,39 @@ object FailedDocumentRegistry {
                 .remove(KEY_IN_PROGRESS_URI)
                 .remove(KEY_IN_PROGRESS_NAME)
                 .remove(KEY_IN_PROGRESS_TIME)
-                .apply()
+                .commit()
+        }
+    }
+
+    /**
+     * Called by global uncaught exception handler when an unhandled crash or OOM occurs.
+     * Quarantines the current in-flight file and engages Safe Mode immediately.
+     */
+    fun handleUncaughtCrash(context: Context, throwable: Throwable) {
+        val app = context.applicationContext ?: context
+        val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val inFlightUri = prefs.getString(KEY_IN_PROGRESS_URI, null)
+        val inFlightName = prefs.getString(KEY_IN_PROGRESS_NAME, null) ?: "Document"
+        if (!inFlightUri.isNullOrBlank()) {
+            recordFailureDirect(
+                app,
+                inFlightUri,
+                inFlightName,
+                "Fatal crash: ${throwable.localizedMessage ?: throwable.javaClass.simpleName}",
+                isFatalCrash = true
+            )
+            prefs.edit()
+                .remove(KEY_IN_PROGRESS_URI)
+                .remove(KEY_IN_PROGRESS_NAME)
+                .remove(KEY_IN_PROGRESS_TIME)
+                .putBoolean(KEY_SAFE_MODE, true)
+                .putString(
+                    KEY_CRASH_AVERTED_MSG,
+                    "Crash loop averted: '$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined."
+                )
+                .commit()
+            _safeModeActive.value = true
+            _crashAvertedNotice.value = "Safe Mode: '$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined."
         }
     }
 
