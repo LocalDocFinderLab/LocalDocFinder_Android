@@ -1,0 +1,122 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:pivotX="54"
+        android:pivotY="54">
+
+        <!-- Outer Soft Glow -->
+        <path
+            android:pathData="M54,22 C71.67,22 86,36.33 86,54 C86,71.67 71.67,86 54,86 C36.33,86 22,71.67 22,54 C22,36.33 36.33,22 54,22 Z"
+            android:fillColor="#1538BDF8" />
+
+        <!-- Back Document Shadow Sheet -->
+        <path
+            android:pathData="M32,28 L60,28 L72,40 L72,78 C72,80.2 70.2,82 68,82 L32,82 C29.8,82 28,80.2 28,78 L28,32 C28,29.8 29.8,28 32,28 Z"
+            android:fillColor="#334155" />
+
+        <!-- Front Document Sheet (Glossy Gradient) -->
+        <path
+            android:pathData="M36,32 L64,32 L76,44 L76,82 C76,84.2 74.2,86 72,86 L36,86 C33.8,86 32,84.2 32,82 L32,36 C32,33.8 33.8,32 36,32 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:startX="32"
+                    android:startY="32"
+                    android:endX="76"
+                    android:endY="86"
+                    android:type="linear">
+                    <item android:offset="0.0" android:color="#F8FAFC" />
+                    <item android:offset="1.0" android:color="#E2E8F0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Folded Corner with Blue Gradient -->
+        <path
+            android:pathData="M64,32 L64,44 L76,44 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:startX="64"
+                    android:startY="32"
+                    android:endX="76"
+                    android:endY="44"
+                    android:type="linear">
+                    <item android:offset="0.0" android:color="#38BDF8" />
+                    <item android:offset="1.0" android:color="#0284C7" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Document Text / Vector Embedding Lines -->
+        <path
+            android:pathData="M40,48 L58,48"
+            android:strokeColor="#64748B"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M40,54 L54,54"
+            android:strokeColor="#64748B"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M40,60 L50,60"
+            android:strokeColor="#64748B"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round" />
+
+        <!-- Neural Vector Nodes (connected) -->
+        <path
+            android:pathData="M40,70 L50,66 L60,72"
+            android:strokeColor="#6366F1"
+            android:strokeWidth="2"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M40,70 A2.5,2.5 0 1,1 40,65 A2.5,2.5 0 1,1 40,70 Z"
+            android:fillColor="#38BDF8" />
+        <path
+            android:pathData="M50,66 A2.5,2.5 0 1,1 50,61 A2.5,2.5 0 1,1 50,66 Z"
+            android:fillColor="#6366F1" />
+        <path
+            android:pathData="M60,72 A2.5,2.5 0 1,1 60,67 A2.5,2.5 0 1,1 60,72 Z"
+            android:fillColor="#A855F7" />
+
+        <!-- Glossy Magnifying Search Lens (Vibrant Cyan / Emerald) -->
+        <path
+            android:pathData="M64,56 A11,11 0 1,1 64,78 A11,11 0 1,1 64,56 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:startX="53"
+                    android:startY="56"
+                    android:endX="75"
+                    android:endY="78"
+                    android:type="linear">
+                    <item android:offset="0.0" android:color="#38BDF8" />
+                    <item android:offset="1.0" android:color="#0EA5E9" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Lens Inner Glass -->
+        <path
+            android:pathData="M64,58.5 A8.5,8.5 0 1,1 64,75.5 A8.5,8.5 0 1,1 64,58.5 Z"
+            android:fillColor="#0F172A" />
+
+        <!-- Lens Specular Glint -->
+        <path
+            android:pathData="M60,61 A5,5 0 0,1 67,63"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2"
+            android:strokeLineCap="round" />
+
+        <!-- Search Lens Handle -->
+        <path
+            android:pathData="M72,75 L82,85"
+            android:strokeColor="#38BDF8"
+            android:strokeWidth="4.5"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp"
+    android:height="56dp"
+    android:viewportWidth="250"
+    android:viewportHeight="56">
+    <!-- Bar pill -->
+    <path
+        android:pathData="M28,4 L222,4 C235,4 246,15 246,28 C246,41 235,52 222,52 L28,52 C15,52 4,41 4,28 C4,15 15,4 28,4 Z"
+        android:fillColor="#E61E293B"
+        android:strokeColor="#818CF8"
+        android:strokeWidth="1.5" />
+    <!-- Symbol indicator -->
+    <path
+        android:pathData="M28,16 A12,12 0 1,1 28,40 A12,12 0 1,1 28,16 Z"
+        android:fillColor="#6366F1" />
+    <!-- Bar text line -->
+    <path
+        android:pathData="M52,24 L150,24"
+        android:strokeColor="#E2E8F0"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M52,32 L110,32"
+        android:strokeColor="#94A3B8"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+    <!-- Voice mic circle -->
+    <path
+        android:pathData="M224,18 A10,10 0 1,1 224,38 A10,10 0 1,1 224,18 Z"
+        android:fillColor="#38BDF8" />
+</vector>

@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">LocalDoc Finder</string>
+    <string name="search_hint">Search documents semantically or by keywords…</string>
+    <string name="widget_search_hint">Search local documents…</string>
+    <string name="voice_search_prompt">Speak to search documents…</string>
+    <string name="hybrid_search">Hybrid Search</string>
+    <string name="vector_search">Vector Search</string>
+    <string name="keyword_search">Keyword Search</string>
+    <string name="pick_folder">Select Folder</string>
+    <string name="reindex_all">Re-index</string>
+    <string name="status_ready">Engine Ready</string>
+    <string name="status_indexing">Indexing in progress…</string>
+    <string name="status_idle">No documents indexed yet</string>
+    <string name="total_chunks">Indexed Chunks</string>
+    <string name="backend_label">Execution Backend</string>
+    <string name="open_document">Open Document</string>
+    <string name="similarity_score">Cosine Score</string>
+    <string name="load_sample_docs">Load Sample Knowledge Base</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search documents offline</string>
+    <string name="pixel_optimizer">Pixel Tensor Optimizer</string>
+    <string name="filter_file_type">File Type</string>
+    <string name="sort_results">Sort Results</string>
+    <string name="sort_relevance">Relevance</string>
+    <string name="sort_date_desc">Newest First</string>
+    <string name="sort_date_asc">Oldest First</string>
+    <string name="sort_name_asc">Name A-Z</string>
+    <string name="sort_name_desc">Name Z-A</string>
+    <string name="confidence_distribution">Confidence Score Distribution</string>
+    <string name="glass_opacity">Glass Display Opacity</string>
+    <string name="glass_see_through">See-Through</string>
+    <string name="glass_translucent">Translucent</string>
+    <string name="glass_opaque">Opaque</string>
+    <string name="voice_search">Voice Search</string>
+    <string name="preview_document">Preview Document</string>
+</resources>

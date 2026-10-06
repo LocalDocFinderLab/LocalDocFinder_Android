@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="0dp">
+
+    <!-- Glossy Google-bar-style Search Capsule -->
+    <LinearLayout
+        android:id="@+id/widget_bar_container"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_google_bar_bg"
+        android:paddingLeft="8dp"
+        android:paddingRight="8dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <!-- Left End: LocalDoc Finder Glossy Symbol -->
+        <ImageView
+            android:id="@+id/widget_symbol"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_localdoc_symbol"
+            android:contentDescription="LocalDoc Finder Symbol" />
+
+        <!-- Center: Search Prompt & Live Index Status -->
+        <LinearLayout
+            android:id="@+id/widget_search_bar_clickable"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingLeft="8dp"
+            android:paddingRight="6dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="6dp">
+
+            <TextView
+                android:id="@+id/widget_search_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Search local documents…"
+                android:textColor="#F8FAFC"
+                android:textSize="12.5sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/widget_sub_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="LocalDoc Finder • Tap to search"
+                android:textColor="#94A3B8"
+                android:textSize="9.5sp"
+                android:singleLine="true"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <!-- Live Vector Count Badge -->
+        <TextView
+            android:id="@+id/widget_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginRight="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/widget_badge_bg"
+            android:paddingLeft="7dp"
+            android:paddingRight="7dp"
+            android:paddingStart="7dp"
+            android:paddingEnd="7dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="Offline"
+            android:textColor="#38BDF8"
+            android:textSize="9.5sp"
+            android:textStyle="bold" />
+
+        <!-- Right End: Voice Search Microphone Button -->
+        <FrameLayout
+            android:id="@+id/widget_btn_voice"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/widget_mic_bg">
+
+            <ImageView
+                android:id="@+id/widget_mic_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_voice_mic"
+                android:contentDescription="Voice Search" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

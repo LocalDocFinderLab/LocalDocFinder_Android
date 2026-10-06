@@ -1,0 +1,6 @@
+{
+  "name": "LocalDoc Finder",
+  "description": "Offline document vector search and hybrid semantic engine with SQLite FTS, quantized embeddings, and glossy home screen search overlay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
