@@ -44,7 +44,9 @@ data class DocumentPreviewContent(
 /** One chunk of an indexed document with the overlap shared with the previous chunk trimmed away. */
 data class DocumentDetailChunk(
     val chunkIndex: Int,
-    val text: String
+    val text: String,
+    /** Source page label for PDFs ("p. 3" / "pp. 3–4"); null for formats without pages. */
+    val pageLabel: String? = null
 )
 
 /**
@@ -272,7 +274,8 @@ class DocumentRepository(
                             chunkText = c.text,
                             hash = c.hash,
                             timestamp = fileTimestamp,
-                            embeddingBlob = blob
+                            embeddingBlob = blob,
+                            metadata = com.example.engine.extraction.ChunkMetadata.forPages(c.page, c.pageEnd)
                         )
                     )
                 }
@@ -305,7 +308,13 @@ class DocumentRepository(
     suspend fun loadDocumentDetail(fileUriStr: String, fileName: String): DocumentDetail = withContext(Dispatchers.IO) {
         val dbChunks = dao.getChunksForFile(fileUriStr)
         val stitchedTexts = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
-        val chunks = dbChunks.mapIndexed { i, c -> DocumentDetailChunk(c.chunkIndex, stitchedTexts[i]) }
+        val chunks = dbChunks.mapIndexed { i, c ->
+            DocumentDetailChunk(
+                chunkIndex = c.chunkIndex,
+                text = stitchedTexts[i],
+                pageLabel = com.example.engine.extraction.ChunkMetadata.pageLabel(c.metadata)
+            )
+        }
         val fullText = chunks.joinToString(" ") { it.text }
 
         val uri = Uri.parse(fileUriStr)

@@ -61,7 +61,9 @@ class DocumentPreparationService : Service() {
         val index: Int,
         val text: String,
         val hash: String,
-        val characterCount: Int
+        val characterCount: Int,
+        val page: Int? = null,
+        val pageEnd: Int? = null
     )
 
     data class PreparedDocument(
@@ -181,7 +183,9 @@ class DocumentPreparationService : Service() {
                 index = c.index,
                 text = c.text,
                 hash = c.hash,
-                characterCount = c.text.length
+                characterCount = c.text.length,
+                page = c.page,
+                pageEnd = c.pageEnd
             )
         }
 
@@ -321,7 +325,8 @@ class DocumentPreparationService : Service() {
                             chunkText = c.text,
                             hash = c.hash,
                             timestamp = if (prepared.lastModified > 0) prepared.lastModified else System.currentTimeMillis(),
-                            embeddingBlob = blob
+                            embeddingBlob = blob,
+                            metadata = com.example.engine.extraction.ChunkMetadata.forPages(c.page, c.pageEnd)
                         )
                     )
                 }

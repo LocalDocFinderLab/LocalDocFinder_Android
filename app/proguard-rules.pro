@@ -27,3 +27,9 @@
 # Room and SQLite rules
 -keep class androidx.room.** { *; }
 -dontwarn androidx.room.**
+
+# PDFBox-Android (text extraction). Optional JPEG2000 / crypto providers are not bundled.
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.gemalto.jp2.**
+-dontwarn org.bouncycastle.**

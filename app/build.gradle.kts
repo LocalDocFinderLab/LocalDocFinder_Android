@@ -88,6 +88,8 @@ dependencies {
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.androidx.documentfile)
   implementation(libs.androidx.exifinterface)
+  // Apache PDFBox port for Android (Apache Tika is not usable on Android: it needs java.awt/javax.xml.stream)
+  implementation(libs.pdfbox.android)
   implementation(libs.tensorflow.lite)
   implementation(libs.tensorflow.lite.gpu)
   implementation(libs.coil.compose)
