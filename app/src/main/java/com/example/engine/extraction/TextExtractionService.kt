@@ -51,6 +51,8 @@ class TextExtractionService(private val context: Context) {
             // pathological files (StackOverflowError, OutOfMemoryError, LinkageError). None should kill indexing.
             if (t is OutOfMemoryError) {
                 System.gc()
+                Log.w(TAG, "PDFBox encountered OutOfMemoryError on $uri. Skipping fallback to protect device stability.")
+                return ExtractedDocument.empty(PdfBoxTextExtractor.NAME, "Out of memory during PDF parsing")
             }
             failure = "${t.javaClass.simpleName}: ${t.message}"
             Log.w(TAG, "PDFBox could not read $uri ($failure); trying built-in extractor")

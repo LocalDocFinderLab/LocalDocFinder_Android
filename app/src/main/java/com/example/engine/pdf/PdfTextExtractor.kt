@@ -79,8 +79,8 @@ object PdfTextExtractor {
                 }
             } catch (_: Throwable) { 0L }
 
-            // Guard against massive files blowing up memory in byte buffer
-            if (fileSize > 25L * 1024 * 1024) {
+            // Guard against massive files blowing up memory in byte buffer (strict 8MB limit)
+            if (fileSize > 8L * 1024 * 1024) {
                 Log.w(TAG, "PDF is very large (${fileSize / (1024 * 1024)} MB). Using PdfRenderer fallback to prevent OOM.")
                 val rendererText = extractTextUsingPdfRenderer(context, uri)
                 val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "Large PDF"
@@ -92,16 +92,22 @@ object PdfTextExtractor {
                         isSuccess = true
                     )
                 } else {
-                    ExtractionResult("", emptyList(), PdfMetadata(), false, "File exceeds 25MB in-memory scan limit")
+                    ExtractionResult("", emptyList(), PdfMetadata(), false, "File exceeds 8MB in-memory scan limit")
                 }
             }
 
-            val bytes = if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
-                val path = uri.path ?: uri.toString().removePrefix("file://")
-                File(path).readBytes()
-            } else {
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: return ExtractionResult("", emptyList(), PdfMetadata(), false, "Unable to open URI stream")
+            val bytes = try {
+                if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
+                    val path = uri.path ?: uri.toString().removePrefix("file://")
+                    File(path).readBytes()
+                } else {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: return ExtractionResult("", emptyList(), PdfMetadata(), false, "Unable to open URI stream")
+                }
+            } catch (t: Throwable) {
+                if (t is OutOfMemoryError) System.gc()
+                Log.w(TAG, "Failed reading PDF bytes for $uri: ${t.message}")
+                return ExtractionResult("", emptyList(), PdfMetadata(), false, "Memory limit reached while reading PDF")
             }
             val res = extractFromBytes(bytes)
             if (res.fullText.isNotBlank()) {
@@ -340,20 +346,27 @@ object PdfTextExtractor {
 
             if (streamIdx != -1) {
                 dictionaryPart = objBody.substring(0, streamIdx).trim()
-                var rawStreamStart = startIdx + streamIdx + streamStartKeyword.length
-                if (rawStreamStart < bytes.size && bytes[rawStreamStart] == '\r'.code.toByte()) rawStreamStart++
-                if (rawStreamStart < bytes.size && bytes[rawStreamStart] == '\n'.code.toByte()) rawStreamStart++
+                val isImageStream = dictionaryPart.contains("/Subtype /Image") ||
+                        dictionaryPart.contains("/DCTDecode") ||
+                        dictionaryPart.contains("/JPXDecode") ||
+                        dictionaryPart.contains("/JBIG2Decode")
 
-                val endStreamIdx = rawIso.indexOf("endstream", rawStreamStart)
-                if (endStreamIdx != -1 && endStreamIdx >= rawStreamStart) {
-                    var rawStreamEnd = endStreamIdx
-                    if (rawStreamEnd > rawStreamStart && bytes[rawStreamEnd - 1] == '\n'.code.toByte()) rawStreamEnd--
-                    if (rawStreamEnd > rawStreamStart && bytes[rawStreamEnd - 1] == '\r'.code.toByte()) rawStreamEnd--
+                if (!isImageStream) {
+                    var rawStreamStart = startIdx + streamIdx + streamStartKeyword.length
+                    if (rawStreamStart < bytes.size && bytes[rawStreamStart] == '\r'.code.toByte()) rawStreamStart++
+                    if (rawStreamStart < bytes.size && bytes[rawStreamStart] == '\n'.code.toByte()) rawStreamStart++
 
-                    val streamLen = rawStreamEnd - rawStreamStart
-                    if (streamLen > 0 && rawStreamStart + streamLen <= bytes.size) {
-                        val compressedData = bytes.copyOfRange(rawStreamStart, rawStreamStart + streamLen)
-                        streamBytes = decodeStream(compressedData, dictionaryPart)
+                    val endStreamIdx = rawIso.indexOf("endstream", rawStreamStart)
+                    if (endStreamIdx != -1 && endStreamIdx >= rawStreamStart) {
+                        var rawStreamEnd = endStreamIdx
+                        if (rawStreamEnd > rawStreamStart && bytes[rawStreamEnd - 1] == '\n'.code.toByte()) rawStreamEnd--
+                        if (rawStreamEnd > rawStreamStart && bytes[rawStreamEnd - 1] == '\r'.code.toByte()) rawStreamEnd--
+
+                        val streamLen = rawStreamEnd - rawStreamStart
+                        if (streamLen in 1..1_500_000 && rawStreamStart + streamLen <= bytes.size) {
+                            val compressedData = bytes.copyOfRange(rawStreamStart, rawStreamStart + streamLen)
+                            streamBytes = decodeStream(compressedData, dictionaryPart)
+                        }
                     }
                 }
             } else {
@@ -394,12 +407,13 @@ object PdfTextExtractor {
     }
 
     private fun decompressFlate(data: ByteArray): ByteArray? {
+        val maxDecompressSize = 512 * 1024 // 512KB limit per stream prevents memory exhaustion
         return try {
             val inflater = Inflater(false)
             inflater.setInput(data)
             val buffer = ByteArray(4096)
             val out = ByteArrayOutputStream()
-            while (!inflater.finished()) {
+            while (!inflater.finished() && out.size() < maxDecompressSize) {
                 val count = inflater.inflate(buffer)
                 if (count == 0 && inflater.needsInput()) break
                 out.write(buffer, 0, count)
@@ -414,7 +428,7 @@ object PdfTextExtractor {
                 inflater.setInput(data, offset, data.size - offset)
                 val buffer = ByteArray(4096)
                 val out = ByteArrayOutputStream()
-                while (!inflater.finished()) {
+                while (!inflater.finished() && out.size() < maxDecompressSize) {
                     val count = inflater.inflate(buffer)
                     if (count == 0 && inflater.needsInput()) break
                     out.write(buffer, 0, count)
@@ -542,7 +556,7 @@ object PdfTextExtractor {
             val content = block.groupValues[1]
             val linePattern = Regex("""<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>""")
             for (m in linePattern.findAll(content)) {
-                val src = m.groupValues[1].toInt(16)
+                val src = m.groupValues[1].toIntOrNull(16) ?: continue
                 val dstHex = m.groupValues[2]
                 val dst = decodeUtf16Hex(dstHex)
                 cmap[src] = dst
@@ -554,12 +568,17 @@ object PdfTextExtractor {
             val content = block.groupValues[1]
             val rangePattern = Regex("""<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>""")
             for (m in rangePattern.findAll(content)) {
-                val start = m.groupValues[1].toInt(16)
-                val end = m.groupValues[2].toInt(16)
-                val dstStart = m.groupValues[3].toInt(16)
+                val start = m.groupValues[1].toIntOrNull(16) ?: continue
+                val end = m.groupValues[2].toIntOrNull(16) ?: continue
+                val dstStart = m.groupValues[3].toIntOrNull(16) ?: continue
                 val diff = dstStart - start
-                for (code in start..end) {
-                    cmap[code] = (code + diff).toChar().toString()
+                if (end >= start && (end - start) in 0..2048) {
+                    for (code in start..end) {
+                        val mapped = code + diff
+                        if (mapped in 0..0xFFFF) {
+                            cmap[code] = mapped.toChar().toString()
+                        }
+                    }
                 }
             }
         }
@@ -769,7 +788,8 @@ object PdfTextExtractor {
     }
 
     private fun extractFallbackAsciiRuns(rawIso: String): String {
-        val literals = Regex("""\(([^()]{3,300})\)""").findAll(rawIso)
+        val sample = if (rawIso.length > 65536) rawIso.substring(0, 65536) else rawIso
+        val literals = Regex("""\(([^()]{3,300})\)""").findAll(sample)
             .map { unescapePdfString(it.groupValues[1]) }
             .filter { str ->
                 str.any { it.isLetter() } &&
@@ -781,7 +801,7 @@ object PdfTextExtractor {
 
         if (literals.isNotBlank()) return literals
 
-        return Regex("""[A-Za-z][A-Za-z0-9_-]{2,30}""").findAll(rawIso)
+        return Regex("""[A-Za-z][A-Za-z0-9_-]{2,30}""").findAll(sample)
             .map { it.value }
             .filter { it.lowercase() !in setOf("stream", "endstream", "endobj", "xref", "trailer", "startxref", "flatedecode", "obj", "font") }
             .take(150)
@@ -794,29 +814,37 @@ object PdfTextExtractor {
      */
     private fun extractTextUsingPdfRenderer(context: Context, uri: Uri): String {
         return try {
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return ""
+            val pfd = if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
+                val path = uri.path ?: uri.toString().removePrefix("file://")
+                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
+            } else {
+                context.contentResolver.openFileDescriptor(uri, "r")
+            } ?: return ""
+
             pfd.use { descriptor ->
                 val renderer = PdfRenderer(descriptor)
-                if (renderer.pageCount <= 0) {
-                    renderer.close()
-                    return ""
-                }
-                val pageCount = minOf(renderer.pageCount, 10)
-                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "PDF Document"
-                val sb = StringBuilder()
-                sb.append("Document: $filename\n")
-                sb.append("Total Pages: ${renderer.pageCount}\n\n")
+                try {
+                    if (renderer.pageCount <= 0) {
+                        return ""
+                    }
+                    val pageCount = minOf(renderer.pageCount, 10)
+                    val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "PDF Document"
+                    val sb = StringBuilder()
+                    sb.append("Document: $filename\n")
+                    sb.append("Total Pages: ${renderer.pageCount}\n\n")
 
-                for (i in 0 until pageCount) {
-                    val page = renderer.openPage(i)
-                    val width = page.width
-                    val height = page.height
-                    sb.append("--- Page ${i + 1} ($width x $height px) ---\n")
-                    sb.append("Rendered page content for $filename.\n\n")
-                    page.close()
+                    for (i in 0 until pageCount) {
+                        val page = renderer.openPage(i)
+                        val width = page.width
+                        val height = page.height
+                        sb.append("--- Page ${i + 1} ($width x $height px) ---\n")
+                        sb.append("Rendered page content for $filename.\n\n")
+                        page.close()
+                    }
+                    sb.toString()
+                } finally {
+                    try { renderer.close() } catch (_: Throwable) {}
                 }
-                renderer.close()
-                sb.toString()
             }
         } catch (e: Exception) {
             Log.w(TAG, "PdfRenderer fallback notice: ${e.message}")

@@ -22,14 +22,14 @@ internal object PdfBoxTextExtractor {
     const val NAME = "pdfbox"
 
     /** PDFBox keeps this much of the file in RAM and spills the rest to a temp file. */
-    private const val MAIN_MEMORY_BYTES = 16L * 1024 * 1024
-
+    private const val MAIN_MEMORY_BYTES = 8L * 1024 * 1024
     const val DEFAULT_MAX_PAGES = 300
     const val DEFAULT_MAX_CHARS = 1_000_000
-    private const val MAX_EXTRACTION_TIME_MS = 40_000L
+    private const val MAX_EXTRACTION_TIME_MS = 25_000L
 
     @Volatile
     private var initialised = false
+    private var tempDir: java.io.File? = null
 
     /** PDFBox-Android loads glyph lists / font metrics from assets; this must run once per process. */
     fun ensureInitialised(context: Context) {
@@ -37,6 +37,7 @@ internal object PdfBoxTextExtractor {
         synchronized(this) {
             if (!initialised) {
                 PDFBoxResourceLoader.init(context.applicationContext)
+                tempDir = java.io.File(context.cacheDir, "pdfbox_tmp").apply { mkdirs() }
                 initialised = true
             }
         }
@@ -54,7 +55,15 @@ internal object PdfBoxTextExtractor {
         maxChars: Int = DEFAULT_MAX_CHARS,
         keepGoing: () -> Boolean = { true }
     ): ExtractedDocument {
-        PDDocument.load(input, MemoryUsageSetting.setupMixed(MAIN_MEMORY_BYTES)).use { doc ->
+        val memorySetting = try {
+            val setting = MemoryUsageSetting.setupMixed(MAIN_MEMORY_BYTES)
+            tempDir?.let { setting.setTempDir(it) }
+            setting
+        } catch (_: Throwable) {
+            MemoryUsageSetting.setupMainMemoryOnly(MAIN_MEMORY_BYTES)
+        }
+
+        PDDocument.load(input, memorySetting).use { doc ->
             val info = doc.documentInformation
             val totalPages = doc.numberOfPages
             val metadata = ExtractedMetadata(
