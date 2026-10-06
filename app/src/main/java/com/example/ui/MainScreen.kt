@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -218,6 +219,12 @@ fun MainScreen(
     var showSearchModeInfoDialog by remember { mutableStateOf(false) }
     var showHardwareDashboard by remember { mutableStateOf(false) }
     var showChatBackupSheet by remember { mutableStateOf(false) }
+    var showQuarantineDialog by remember { mutableStateOf(false) }
+
+    // Crash Loop & Safe Mode
+    val quarantinedCount by viewModel.quarantinedCount.collectAsStateWithLifecycle()
+    val safeModeActive by viewModel.safeModeActive.collectAsStateWithLifecycle()
+    val crashAvertedNotice by viewModel.crashAvertedNotice.collectAsStateWithLifecycle()
 
     var taggingFileUri by remember { mutableStateOf<String?>(null) }
     var taggingFileName by remember { mutableStateOf<String?>(null) }
@@ -774,6 +781,76 @@ fun MainScreen(
                             }
                         }
 
+                        // Safe Mode & Crash Prevention Quarantine Banner
+                        AnimatedVisibility(visible = safeModeActive || quarantinedCount > 0) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f),
+                                tonalElevation = 2.dp
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Bolt,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            if (safeModeActive) "Safe Mode Active" else "Quarantine Active",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        if (quarantinedCount > 0) {
+                                            Badge(
+                                                containerColor = MaterialTheme.colorScheme.error
+                                            ) {
+                                                Text("$quarantinedCount skipped", fontSize = 10.sp, color = Color.White)
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        crashAvertedNotice
+                                            ?: "Problematic files caused crashes or memory exhaustion and were quarantined to prevent crash loops.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = { showQuarantineDialog = true },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("View Skipped Files", fontSize = 11.sp)
+                                        }
+                                        FilledTonalButton(
+                                            onClick = {
+                                                viewModel.dismissSafeMode()
+                                                Toast.makeText(context, "Safe mode dismissed", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("Dismiss Safe Mode", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Real-time Indexing Status Card displaying current documents & embedding progress
                         IndexingStatusCard(
                             totalFiles = totalFiles,
@@ -1041,6 +1118,115 @@ fun MainScreen(
                     modifier = Modifier.testTag("cancel_batch_delete_dialog_button")
                 ) {
                     Text(text = "Cancel")
+                }
+            }
+        )
+    }
+
+    // Quarantined Problematic Files Dialog
+    if (showQuarantineDialog) {
+        val quarantinedDocs = remember(quarantinedCount) { viewModel.getQuarantinedDocuments() }
+        AlertDialog(
+            onDismissRequest = { showQuarantineDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Bolt,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(text = "Quarantined Documents (${quarantinedDocs.size})")
+            },
+            text = {
+                if (quarantinedDocs.isEmpty()) {
+                    Text(
+                        text = "No documents are currently quarantined. Safe mode can be dismissed.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "These documents triggered severe out-of-memory errors or process crashes. They have been isolated to protect app stability.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(quarantinedDocs, key = { it.fileUri }) { doc ->
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = doc.fileName,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = if (doc.isHardCrash) "Caused process crash / OOM" else doc.reason,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.error,
+                                                maxLines = 2
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.retryQuarantinedDocument(doc.fileUri)
+                                                Toast.makeText(context, "Removed from quarantine: ${doc.fileName}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        ) {
+                                            Text("Retry", fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (quarantinedDocs.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            viewModel.clearQuarantine()
+                            Toast.makeText(context, "All files unquarantined", Toast.LENGTH_SHORT).show()
+                            showQuarantineDialog = false
+                        }
+                    ) {
+                        Text("Clear All", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            viewModel.dismissSafeMode()
+                            showQuarantineDialog = false
+                        }
+                    ) {
+                        Text("Dismiss Safe Mode")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuarantineDialog = false }) {
+                    Text("Close")
                 }
             }
         )

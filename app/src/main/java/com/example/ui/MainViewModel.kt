@@ -459,6 +459,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** True after the user pressed Stop; background scans stay off until indexing is started again. */
     val isIndexingStoppedByUser: StateFlow<Boolean> = IndexingController.stoppedByUserFlow(application)
 
+    // --- Crash Loop & Safe Mode Protection ---
+    val quarantinedCount: StateFlow<Int> = com.example.engine.FailedDocumentRegistry.quarantinedCount
+    val safeModeActive: StateFlow<Boolean> = com.example.engine.FailedDocumentRegistry.safeModeActive
+    val crashAvertedNotice: StateFlow<String?> = com.example.engine.FailedDocumentRegistry.crashAvertedNotice
+
+    fun getQuarantinedDocuments(): List<com.example.engine.QuarantinedDocument> =
+        com.example.engine.FailedDocumentRegistry.getQuarantinedList(getApplication())
+
+    fun dismissSafeMode() {
+        com.example.engine.FailedDocumentRegistry.dismissSafeMode(getApplication())
+    }
+
+    fun clearQuarantine() {
+        com.example.engine.FailedDocumentRegistry.clearAll(getApplication())
+    }
+
+    fun retryQuarantinedDocument(fileUri: String) {
+        com.example.engine.FailedDocumentRegistry.unquarantineFile(getApplication(), fileUri)
+    }
+
     private val _isDocumentIndexRunning = MutableStateFlow(false)
 
     /** True while any indexing work is running: manual index jobs, background scans, chat import or model re-index. */
@@ -547,6 +567,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             delay(300)
             // The user pressed Stop earlier: do not start anything on their behalf.
             if (IndexingController.isStoppedByUser(application)) return@launch
+            // Safe Mode is active (recent crash or quarantine): do not auto-crawl to prevent crash loops
+            if (com.example.engine.FailedDocumentRegistry.isSafeModeActive(application)) return@launch
+
             val directUris = repository.getIndexedFileUrisDirect()
             if (directUris.isEmpty()) {
                 // First launch: index the user's Downloads (or the whole storage when permitted)
@@ -1009,6 +1032,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun autoCrawlOnPermissionGranted() {
         val app = getApplication<Application>()
         if (IndexingController.isStoppedByUser(app)) return
+        if (com.example.engine.FailedDocumentRegistry.isSafeModeActive(app)) return
         if (hasAllFilesAccess()) {
             if (fullCrawlRequested || IndexingController.isFullStorageCrawlDone(app)) return
             fullCrawlRequested = true
