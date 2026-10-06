@@ -37,25 +37,13 @@ interface DocumentChunkDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChunks(chunks: List<DocumentChunkEntity>): List<Long>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertFts(fts: DocumentChunkFtsEntity): Long
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertFtsList(ftsList: List<DocumentChunkFtsEntity>)
-
+    /**
+     * Inserts chunks. The `documents_fts` index is an external-content FTS4 table over `documents`,
+     * so Room's generated triggers keep it in sync automatically inside the same transaction.
+     */
     @Transaction
     suspend fun insertChunksWithFts(chunks: List<DocumentChunkEntity>) {
-        val ids = insertChunks(chunks)
-        val ftsList = chunks.zip(ids) { chunk, id ->
-            DocumentChunkFtsEntity(
-                chunkId = id,
-                chunkText = chunk.chunkText,
-                fileName = chunk.fileName,
-                fileUri = chunk.fileUri,
-                tags = chunk.tags
-            )
-        }
-        insertFtsList(ftsList)
+        insertChunks(chunks)
     }
 
     // --- Tagging System Queries ---
@@ -89,24 +77,6 @@ interface DocumentChunkDao {
 
     @Query("UPDATE documents SET tags = :tags WHERE fileUri = :fileUri")
     suspend fun updateChunkTagsForFile(fileUri: String, tags: String)
-
-    @Query("UPDATE documents_fts SET tags = :tags WHERE fileUri = :fileUri")
-    suspend fun updateFtsTagsForFile(fileUri: String, tags: String)
-
-    @Transaction
-    suspend fun setTagsForFile(fileUri: String, tags: List<String>) {
-        deleteTagsForFile(fileUri)
-        val cleanTags = tags.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-        if (cleanTags.isNotEmpty()) {
-            val tagEntities = cleanTags.map { DocumentTagEntity(fileUri = fileUri, tag = it) }
-            insertTags(tagEntities)
-        }
-        val tagsString = cleanTags.joinToString(", ")
-        updateChunkTagsForFile(fileUri, tagsString)
-        try {
-            updateFtsTagsForFile(fileUri, tagsString)
-        } catch (_: Exception) {}
-    }
 
     @Query("SELECT * FROM documents WHERE hash = :hash LIMIT 1")
     suspend fun getChunkByHash(hash: String): DocumentChunkEntity?
@@ -149,14 +119,14 @@ interface DocumentChunkDao {
 
     @Query("""
         SELECT d.* FROM documents d
-        JOIN documents_fts ON d.id = documents_fts.chunkId
+        JOIN documents_fts ON d.id = documents_fts.rowid
         WHERE documents_fts MATCH :ftsQuery
         LIMIT :limit
     """)
     suspend fun searchFts(ftsQuery: String, limit: Int = 100): List<DocumentChunkEntity>
 
     @Query("""
-        SELECT chunkId FROM documents_fts 
+        SELECT rowid FROM documents_fts 
         WHERE documents_fts MATCH :ftsQuery 
         LIMIT :limit
     """)
@@ -173,15 +143,8 @@ interface DocumentChunkDao {
     @Query("DELETE FROM documents WHERE fileUri = :fileUri")
     suspend fun deleteChunksByFile(fileUri: String)
 
-    @Query("""
-        DELETE FROM documents_fts 
-        WHERE chunkId IN (SELECT id FROM documents WHERE fileUri = :fileUri)
-    """)
-    suspend fun deleteFtsByFile(fileUri: String)
-
     @Transaction
     suspend fun deleteFileRecord(fileUri: String) {
-        deleteFtsByFile(fileUri)
         deleteChunksByFile(fileUri)
         deleteTagsForFile(fileUri)
     }
@@ -189,19 +152,12 @@ interface DocumentChunkDao {
     @Query("DELETE FROM documents WHERE fileUri IN (:fileUris)")
     suspend fun deleteChunksByFiles(fileUris: List<String>)
 
-    @Query("""
-        DELETE FROM documents_fts 
-        WHERE chunkId IN (SELECT id FROM documents WHERE fileUri IN (:fileUris))
-    """)
-    suspend fun deleteFtsByFiles(fileUris: List<String>)
-
     @Query("DELETE FROM document_tags WHERE fileUri IN (:fileUris)")
     suspend fun deleteTagsForFiles(fileUris: List<String>)
 
     @Transaction
     suspend fun deleteFileRecords(fileUris: List<String>) {
         if (fileUris.isEmpty()) return
-        deleteFtsByFiles(fileUris)
         deleteChunksByFiles(fileUris)
         deleteTagsForFiles(fileUris)
     }
@@ -209,28 +165,20 @@ interface DocumentChunkDao {
     @Query("DELETE FROM documents WHERE id IN (:chunkIds)")
     suspend fun deleteChunksByIds(chunkIds: List<Long>)
 
-    @Query("DELETE FROM documents_fts WHERE chunkId IN (:chunkIds)")
-    suspend fun deleteFtsByIds(chunkIds: List<Long>)
-
     @Transaction
     suspend fun deleteChunkRecords(chunkIds: List<Long>) {
         if (chunkIds.isEmpty()) return
-        deleteFtsByIds(chunkIds)
         deleteChunksByIds(chunkIds)
     }
 
     @Query("DELETE FROM documents")
     suspend fun clearDocuments()
 
-    @Query("DELETE FROM documents_fts")
-    suspend fun clearFts()
-
     @Query("DELETE FROM document_tags")
     suspend fun clearTags()
 
     @Transaction
     suspend fun clearAll() {
-        clearFts()
         clearDocuments()
         clearTags()
     }

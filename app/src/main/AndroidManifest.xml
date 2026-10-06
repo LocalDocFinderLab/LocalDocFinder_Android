@@ -107,6 +107,10 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Required on Android 12+ (targetSdk 31+) so the TFLite GPU delegate can load the vendor OpenCL driver. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
     </application>
 
 </manifest>
