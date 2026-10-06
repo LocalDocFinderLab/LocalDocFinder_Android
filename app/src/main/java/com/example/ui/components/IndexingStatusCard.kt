@@ -20,6 +20,11 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PendingActions
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -49,7 +54,10 @@ fun IndexingStatusCard(
     totalChunks: Int,
     indexingState: IndexingState,
     onStopIndexingClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isIndexingActive: Boolean = indexingState is IndexingState.Progress,
+    isStoppedByUser: Boolean = false,
+    onStartIndexingClick: (() -> Unit)? = null
 ) {
     Card(
         modifier = modifier
@@ -105,9 +113,15 @@ fun IndexingStatusCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (indexingState is IndexingState.Progress) "Processing files…" else "All files scanned & ready",
+                            text = when {
+                                indexingState is IndexingState.Progress -> "Processing files…"
+                                isIndexingActive -> "Scanning for new files…"
+                                isStoppedByUser -> "Indexing stopped"
+                                else -> "All files scanned & ready"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("indexing_status_text")
                         )
                     }
                 }
@@ -224,6 +238,48 @@ fun IndexingStatusCard(
                                 modifier = Modifier.testTag("indexing_phase_text")
                             )
                         }
+                    }
+                }
+            }
+
+            if (onStartIndexingClick != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                if (isIndexingActive) {
+                    FilledTonalButton(
+                        onClick = onStopIndexingClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_stop_indexing"),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Stop indexing", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Button(
+                        onClick = onStartIndexingClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_start_indexing")
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isStoppedByUser) "Start indexing" else "Scan & index now",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (isStoppedByUser) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Nothing runs in the background until you start indexing again.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

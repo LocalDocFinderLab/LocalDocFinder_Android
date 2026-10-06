@@ -88,6 +88,11 @@ class DownloadsFileObserverWorker(
     private var activeObserver: FileObserver? = null
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.example.worker.IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping.")
+            return@withContext Result.success(workDataOf(KEY_OBSERVER_MESSAGE to "Skipped: indexing is stopped"))
+        }
+
         val repository = DocumentRepository(context)
 
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)

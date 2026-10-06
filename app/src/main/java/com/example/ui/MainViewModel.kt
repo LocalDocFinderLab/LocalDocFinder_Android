@@ -29,6 +29,7 @@ import com.example.updater.model.UpdateCheckResult
 import com.example.updater.model.UpdateConfig
 import com.example.updater.repository.UpdatePreferences
 import com.example.worker.DocumentIndexWorker
+import com.example.worker.IndexingController
 import com.example.worker.PdfSyncWorker
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -342,7 +343,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _reindexingModelProgress.value = 0.05f
         _reindexingModelStatus.value = "Starting re-indexing with ${activeEmbeddingModel.value.shortName}…"
 
-        viewModelScope.launch {
+        reindexJob = viewModelScope.launch {
             try {
                 val updatedCount = repository.reindexAllDocumentsWithActiveModel { cur, total, file ->
                     val pct = if (total > 0) cur.toFloat() / total.toFloat() else 0.5f
@@ -354,6 +355,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(1200)
                 performSearch(_query.value, _searchMode.value, _selectedTag.value)
                 onComplete?.invoke(updatedCount)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _reindexingModelStatus.value = "Re-indexing stopped"
+                throw e
             } catch (e: Exception) {
                 _reindexingModelStatus.value = "Re-indexing error: ${e.message}"
             } finally {
@@ -412,6 +416,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         com.example.worker.FolderMonitorWorker.getLastScanInfo(application).third
     )
     val folderMonitorStatus: StateFlow<String> = _folderMonitorStatus.asStateFlow()
+
+    // --- Start / Stop indexing ---
+    /** True after the user pressed Stop; background scans stay off until indexing is started again. */
+    val isIndexingStoppedByUser: StateFlow<Boolean> = IndexingController.stoppedByUserFlow(application)
+
+    private val _isDocumentIndexRunning = MutableStateFlow(false)
+
+    /** True while any indexing work is running: manual index jobs, background scans, chat import or model re-index. */
+    val isIndexingActive: StateFlow<Boolean> = combine(
+        _indexingState,
+        _isDocumentIndexRunning,
+        _fileObserverStatus,
+        chatIndexingProgress,
+        _isReindexingModel
+    ) { state, docIndexRunning, scan, chat, reindexing ->
+        state is IndexingState.Progress ||
+                docIndexRunning ||
+                scan.isRunning ||
+                chat is com.example.service.ChatIndexingProgress.Active ||
+                reindexing
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private var reindexJob: Job? = null
 
     val designatedMonitoredFolder: java.io.File
         get() = com.example.worker.FolderMonitorWorker.getDesignatedFolder(getApplication())
@@ -478,6 +505,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Auto-crawl device Downloads & storage for real PDFs on launch
         viewModelScope.launch {
             delay(300)
+            // The user pressed Stop earlier: do not start anything on their behalf.
+            if (IndexingController.isStoppedByUser(application)) return@launch
             val directUris = repository.getIndexedFileUrisDirect()
             if (directUris.isEmpty()) {
                 // First launch: Automatically trigger indexing of user's Downloads & device PDFs
@@ -503,6 +532,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        // Reflect manual index jobs in the Start/Stop button even if they were started before this screen opened
+        viewModelScope.launch {
+            workManager.getWorkInfosByTagFlow(DocumentIndexWorker.TAG).collect { infos ->
+                _isDocumentIndexRunning.value = infos.any { it.state == WorkInfo.State.RUNNING }
+            }
+        }
+
         // Track FileObserver, FolderMonitor, & PdfSync background tasks progress in real-time
         viewModelScope.launch {
             combine(
@@ -584,6 +620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun triggerImmediateFileObserverScan() {
+        IndexingController.resume(getApplication())
         com.example.worker.DownloadsFileObserverWorker.triggerImmediateScan(getApplication())
         com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
         com.example.worker.PdfSyncWorker.triggerImmediateSync(getApplication())
@@ -654,6 +691,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun triggerFolderMonitorScan(onResult: ((newFiles: Int, newChunks: Int, status: String) -> Unit)? = null) {
+        IndexingController.resume(getApplication())
         viewModelScope.launch {
             _indexingState.value = IndexingState.Progress(
                 current = 1,
@@ -878,19 +916,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Enqueues a manual indexing job. Explicitly starting indexing counts as the user turning it back on,
+     * so the stopped flag is cleared and the periodic background scan is restored.
+     */
+    private fun enqueueIndexRequest(request: androidx.work.OneTimeWorkRequest, uniqueName: String) {
+        IndexingController.resume(getApplication())
+        workManager.enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
+        observeWork(request.id)
+    }
+
     fun startIndexing(treeUri: Uri) {
         val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
             .setInputData(workDataOf(DocumentIndexWorker.KEY_TREE_URI to treeUri.toString()))
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -902,13 +944,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -921,13 +957,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     fun hasAllFilesAccess(): Boolean {
@@ -942,6 +972,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun autoCrawlOnPermissionGranted() {
+        if (IndexingController.isStoppedByUser(getApplication())) return
         viewModelScope.launch {
             indexDownloadsDirectory()
             if (hasAllFilesAccess()) {
@@ -960,13 +991,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -980,13 +1005,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -1039,11 +1058,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Stops all indexing right now (manual jobs, background scans, chat import, model re-index) and keeps
+     * background indexing off until [startAllIndexing] is called.
+     */
     fun stopIndexing() {
-        workManager.cancelAllWorkByTag(DocumentIndexWorker.TAG)
-        workManager.cancelUniqueWork("document_indexing_work")
-        workManager.cancelUniqueWork("document_indexing_sample_work")
+        IndexingController.stopAll(getApplication())
+        reindexJob?.cancel()
         _indexingState.value = IndexingState.Idle
+    }
+
+    /** Clears the user's "stopped" flag and restores background scanning without starting a job yet. */
+    fun allowIndexing() {
+        IndexingController.resume(getApplication())
+    }
+
+    /**
+     * Starts indexing: turns background scanning back on and indexes everything not yet in the index
+     * (the whole storage when "All files access" is granted, otherwise the Downloads folder).
+     * Files that are already indexed and unchanged are skipped.
+     */
+    fun startAllIndexing() {
+        if (hasAllFilesAccess()) {
+            indexEntireSystemStorage()
+        } else {
+            indexDownloadsDirectory()
+        }
+        com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
     }
 
     fun loadSampleKnowledgeBase() {
@@ -1052,13 +1093,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_sample_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
     fun load100SampleFiles() {
@@ -1067,13 +1102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_sample_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
     /**

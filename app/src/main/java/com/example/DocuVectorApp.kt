@@ -20,9 +20,12 @@ class DocuVectorApp : Application(), Configuration.Provider {
         createNotificationChannel()
         com.example.updater.worker.AppUpdateCheckWorker.ensureNotificationChannel(this)
         try {
-            com.example.worker.ContinuousSyncWorker.scheduleContinuousSync(this)
-            com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(this)
-            com.example.worker.DownloadsFileObserverWorker.scheduleDownloadsObserver(this)
+            // Background indexing stays off if the user stopped it; "Start indexing" re-schedules it.
+            if (!com.example.worker.IndexingController.isStoppedByUser(this)) {
+                com.example.worker.ContinuousSyncWorker.scheduleContinuousSync(this)
+                com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(this)
+                com.example.worker.DownloadsFileObserverWorker.scheduleDownloadsObserver(this)
+            }
             com.example.updater.worker.AppUpdateCheckWorker.schedulePeriodicCheck(this)
         } catch (e: Throwable) {
             Log.w("DocuVectorApp", "Worker scheduling deferred: ${e.message}")

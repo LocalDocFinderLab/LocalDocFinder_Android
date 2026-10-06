@@ -203,6 +203,11 @@ class FolderMonitorWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.example.worker.IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping.")
+            return@withContext Result.success(workDataOf(KEY_SCAN_MESSAGE to "Skipped: indexing is stopped"))
+        }
+
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager?.isPowerSaveMode == true) {
             Log.i(TAG, "Device is in Power Saving Mode. Skipping folder monitoring scan.")

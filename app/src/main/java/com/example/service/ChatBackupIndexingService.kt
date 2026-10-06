@@ -78,6 +78,18 @@ class ChatBackupIndexingService : Service() {
         private val _serviceProgress = MutableStateFlow<ChatIndexingProgress>(ChatIndexingProgress.Idle)
         val serviceProgress: StateFlow<ChatIndexingProgress> = _serviceProgress.asStateFlow()
 
+        /** Asks the service to cancel the current chat indexing job, but only if one is actually running. */
+        fun cancelIfRunning(context: Context) {
+            if (_serviceProgress.value !is ChatIndexingProgress.Active) return
+            try {
+                context.startService(
+                    Intent(context, ChatBackupIndexingService::class.java).apply { action = ACTION_CANCEL }
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not cancel chat indexing: ${e.message}")
+            }
+        }
+
         fun startForUri(context: Context, uri: Uri, fileName: String? = null) {
             val intent = Intent(context, ChatBackupIndexingService::class.java).apply {
                 action = ACTION_INDEX_URI

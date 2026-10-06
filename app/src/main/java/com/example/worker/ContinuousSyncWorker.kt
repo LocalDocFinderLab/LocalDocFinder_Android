@@ -59,6 +59,11 @@ class ContinuousSyncWorker(
     private val repository = DocumentRepository(context)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping continuous sync.")
+            return@withContext Result.success(workDataOf("skipped_reason" to "stopped_by_user"))
+        }
+
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager?.isPowerSaveMode == true) {
             Log.i(TAG, "Device is in Power Saving Mode. Skipping background sync to conserve battery.")

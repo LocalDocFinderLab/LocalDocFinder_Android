@@ -179,6 +179,8 @@ fun MainScreen(
     val isGamingModePaused by viewModel.isGamingModePaused.collectAsStateWithLifecycle()
     val includeChatBackups by viewModel.includeChatBackups.collectAsStateWithLifecycle()
     val chatIndexingProgress by viewModel.chatIndexingProgress.collectAsStateWithLifecycle()
+    val isIndexingActive by viewModel.isIndexingActive.collectAsStateWithLifecycle()
+    val isIndexingStoppedByUser by viewModel.isIndexingStoppedByUser.collectAsStateWithLifecycle()
 
     val isMultiSelectMode by viewModel.isMultiSelectMode.collectAsStateWithLifecycle()
     val selectedDocumentUris by viewModel.selectedDocumentUris.collectAsStateWithLifecycle()
@@ -772,7 +774,20 @@ fun MainScreen(
                             totalFiles = totalFiles,
                             totalChunks = totalChunks,
                             indexingState = indexingState,
-                            onStopIndexingClick = { viewModel.stopIndexing() },
+                            onStopIndexingClick = {
+                                viewModel.stopIndexing()
+                                Toast.makeText(context, "Indexing stopped", Toast.LENGTH_SHORT).show()
+                            },
+                            isIndexingActive = isIndexingActive,
+                            isStoppedByUser = isIndexingStoppedByUser,
+                            onStartIndexingClick = {
+                                // Clear the "stopped" flag first so a permission prompt that is granted later still crawls
+                                viewModel.allowIndexing()
+                                requestStoragePermissionsAndCrawl {
+                                    viewModel.startAllIndexing()
+                                    Toast.makeText(context, "Indexing started", Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
 
