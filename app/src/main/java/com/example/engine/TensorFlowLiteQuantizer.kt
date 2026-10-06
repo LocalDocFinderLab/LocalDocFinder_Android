@@ -185,6 +185,59 @@ object TensorFlowLiteQuantizer {
     }
 
     /**
+     * Returns the embedding dimension stored in a BLOB without decoding it, or 0 when the BLOB is empty/invalid.
+     * Handles both TFLite INT8 quantized BLOBs (dimension is stored in the header) and legacy 32-bit float BLOBs.
+     */
+    @JvmStatic
+    fun blobDimension(blob: ByteArray): Int {
+        if (blob.isEmpty()) return 0
+        if (isQuantizedBlob(blob)) {
+            // Header layout: magic(4) + dataType(1) + scale(4) + zeroPoint(4) + dimension(4)
+            return ByteBuffer.wrap(blob, HEADER_SIZE_BYTES - 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        }
+        return if (blob.size % 4 == 0) blob.size / 4 else 0
+    }
+
+    /**
+     * Computes the cosine similarity between a float query embedding and a TFLite INT8 quantized document BLOB
+     * directly in the quantized domain, without allocating a dequantized FloatArray per document.
+     *
+     * With v_i = (q_i - zeroPoint) * scale and scale > 0, the scale cancels out of the cosine ratio:
+     *   cos = sum(query_i * (q_i - zp)) / (||query|| * sqrt(sum((q_i - zp)^2)))
+     *
+     * @return Cosine similarity in [-1, 1], or 0 when the BLOB is not quantized, empty, zero-magnitude,
+     * or its dimension differs from the query's.
+     */
+    @JvmStatic
+    fun cosineSimilarityWithQuantizedBlob(query: FloatArray, blob: ByteArray): Float {
+        if (query.isEmpty() || !isQuantizedBlob(blob)) return 0f
+
+        val buffer = ByteBuffer.wrap(blob).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.int // magic
+        buffer.get() // data type flag
+        buffer.float // scale (cancels out of the ratio)
+        val zeroPoint = buffer.int
+        val dim = buffer.int
+        if (dim != query.size || buffer.remaining() < dim) return 0f
+
+        var dot = 0.0
+        var queryNormSq = 0.0
+        var docNormSq = 0.0
+        for (i in 0 until dim) {
+            val d = (buffer.get().toInt() - zeroPoint).toDouble()
+            val q = query[i].toDouble()
+            dot += q * d
+            queryNormSq += q * q
+            docNormSq += d * d
+        }
+
+        if (queryNormSq <= 1e-12 || docNormSq <= 1e-12) return 0f
+        val similarity = dot / (sqrt(queryNormSq) * sqrt(docNormSq))
+        if (similarity.isNaN() || similarity.isInfinite()) return 0f
+        return similarity.toFloat().coerceIn(-1.0f, 1.0f)
+    }
+
+    /**
      * Calculates storage footprint reduction percentage compared to raw 32-bit floats.
      * For example, 384 dimensions:
      * Raw floats = 384 * 4 = 1536 bytes

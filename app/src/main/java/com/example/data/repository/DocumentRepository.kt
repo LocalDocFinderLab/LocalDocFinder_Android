@@ -128,9 +128,30 @@ class DocumentRepository(
         topK: Int = 30,
         filterTag: String? = null,
         fileTypeFilter: String? = null,
-        sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE
+        sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE,
+        semanticScoring: Boolean = true
     ): List<SearchResult> {
-        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder)
+        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring)
+    }
+
+    /**
+     * Embeds a search query with the active embedding model (same model used for the stored chunk vectors).
+     */
+    suspend fun embedQuery(query: String): FloatArray = modelManager.embedText(query, isQuery = true)
+
+    /**
+     * Loads only the (quantized) embedding BLOBs for the given chunk ids.
+     * Batched to stay below SQLite's bound-variable limit.
+     */
+    suspend fun loadEmbeddingBlobs(chunkIds: List<Long>): Map<Long, ByteArray> = withContext(Dispatchers.IO) {
+        if (chunkIds.isEmpty()) return@withContext emptyMap()
+        val blobs = HashMap<Long, ByteArray>(chunkIds.size)
+        for (batch in chunkIds.distinct().chunked(500)) {
+            for (row in dao.getEmbeddingsForChunkIds(batch)) {
+                blobs[row.id] = row.embeddingBlob
+            }
+        }
+        blobs
     }
 
     /**

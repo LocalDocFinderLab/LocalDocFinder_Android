@@ -7,6 +7,15 @@ import androidx.room.Query
 import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Lightweight projection holding only a chunk's id and its (quantized) embedding BLOB,
+ * so semantic re-ranking never has to load full chunk text for every candidate.
+ */
+data class ChunkEmbeddingRow(
+    val id: Long,
+    val embeddingBlob: ByteArray
+)
+
 @Dao
 interface DocumentChunkDao {
 
@@ -95,6 +104,9 @@ interface DocumentChunkDao {
 
     @Query("SELECT * FROM documents")
     suspend fun getAllChunks(): List<DocumentChunkEntity>
+
+    @Query("SELECT id, embeddingBlob FROM documents WHERE id IN (:chunkIds)")
+    suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>
 
     @Query("SELECT * FROM documents")
     fun getAllChunksFlow(): Flow<List<DocumentChunkEntity>>

@@ -134,13 +134,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val combined = when (mode) {
                 SearchMode.HYBRID -> (normVecW * vecScore + normBm25W * bm25Score).coerceIn(0f, 1f)
                 SearchMode.VECTOR -> vecScore
-                SearchMode.KEYWORD -> bm25Score
+                // FTS candidates that were semantically re-scored (cosine > 0) rank by meaning;
+                // unscored candidates (e.g. embedding unavailable) keep their BM25 order.
+                SearchMode.KEYWORD -> if (res.cosineSimilarity > 0f) vecScore else bm25Score
             }
 
             res.copy(
                 bm25Score = bm25Score,
                 combinedScore = combined
             )
+        }
+    }
+
+    /**
+     * Ranks SQLite FTS full-text candidates by semantic relevance.
+     *
+     * For every candidate chunk the cosine similarity between the query embedding and the chunk's stored
+     * TFLite INT8 quantized embedding BLOB is computed directly in the quantized domain
+     * (see [com.example.engine.VectorSimilarityUtils.cosineSimilarityWithEmbeddingBlob]), so no per-chunk
+     * float array is allocated. Results are returned best-first: highest cosine similarity, ties broken by BM25.
+     *
+     * @param ftsResults FTS/keyword candidates (already filtered by the SQLite full-text query)
+     * @param queryEmbedding embedding of the user's query from the active model
+     * @param embeddingBlobs chunkId -> stored embedding BLOB for the candidates
+     * @param fallbackQueryEmbedding query embedding from the on-device engine, used for chunks that were
+     * indexed with a model whose dimension differs from [queryEmbedding]
+     */
+    fun rankBySemanticRelevance(
+        ftsResults: List<SearchResult>,
+        queryEmbedding: FloatArray,
+        embeddingBlobs: Map<Long, ByteArray>,
+        fallbackQueryEmbedding: FloatArray? = null
+    ): List<SearchResult> {
+        if (ftsResults.isEmpty() || queryEmbedding.isEmpty()) return ftsResults
+
+        return ftsResults
+            .map { res ->
+                val blob = embeddingBlobs[res.chunkId]
+                val queryVec = when {
+                    blob == null || blob.isEmpty() -> null
+                    else -> {
+                        val dim = com.example.engine.TensorFlowLiteQuantizer.blobDimension(blob)
+                        when {
+                            dim == queryEmbedding.size -> queryEmbedding
+                            fallbackQueryEmbedding != null && dim == fallbackQueryEmbedding.size -> fallbackQueryEmbedding
+                            else -> null
+                        }
+                    }
+                }
+                val cosine = if (blob != null && queryVec != null) {
+                    com.example.engine.VectorSimilarityUtils
+                        .cosineSimilarityWithEmbeddingBlob(queryVec, blob)
+                        .coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                res.copy(cosineSimilarity = cosine, combinedScore = if (cosine > 0f) cosine else res.bm25Score)
+            }
+            .sortedWith(
+                compareByDescending<SearchResult> { it.combinedScore }
+                    .thenByDescending { it.bm25Score }
+            )
+    }
+
+    /**
+     * Loads the quantized embeddings of the given FTS candidates and ranks them with [rankBySemanticRelevance].
+     * Falls back to the unchanged (BM25-ordered) list if embedding the query fails.
+     */
+    private suspend fun semanticallyRankFtsResults(query: String, ftsResults: List<SearchResult>): List<SearchResult> {
+        if (ftsResults.isEmpty()) return ftsResults
+        return try {
+            val queryEmbedding = repository.embedQuery(query)
+            val blobs = repository.loadEmbeddingBlobs(ftsResults.map { it.chunkId })
+            val needsFallback = blobs.values.any { blob ->
+                val dim = com.example.engine.TensorFlowLiteQuantizer.blobDimension(blob)
+                dim > 0 && dim != queryEmbedding.size
+            }
+            val fallback = if (needsFallback) repository.embeddingEngine.embedText(query) else null
+            rankBySemanticRelevance(ftsResults, queryEmbedding, blobs, fallback)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ftsResults
         }
     }
 
@@ -783,7 +858,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val start = System.currentTimeMillis()
             try {
                 // Fetch topK = 60 to have ample candidates for interactive filtering and sorting
-                val results = repository.search(q, mode, topK = 60, filterTag = tag)
+                // KEYWORD mode: let SQLite FTS pick the candidates, then rank only those by cosine
+                // similarity against their quantized embeddings (instead of scanning the whole corpus).
+                val isKeyword = mode == SearchMode.KEYWORD && q.isNotBlank()
+                var results = repository.search(q, mode, topK = 60, filterTag = tag, semanticScoring = !isKeyword)
+                if (isKeyword) {
+                    results = semanticallyRankFtsResults(q, results)
+                }
                 _rawSearchResults.value = results
                 _searchLatencyMs.value = System.currentTimeMillis() - start
                 if (q.isNotBlank()) {
