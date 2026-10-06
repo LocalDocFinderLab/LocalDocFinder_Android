@@ -308,6 +308,15 @@ class FolderMonitorWorker(
                         )
                     )
 
+                    // Only shown while there is real work: idle background checks never touch the status bar.
+                    IndexingNotifier.show(
+                        context,
+                        IndexingNotifier.ID_FOLDER_SCAN,
+                        "Indexing new documents",
+                        "$fileName (${idx + 1}/$totalToProcess)",
+                        (idx * 100) / totalToProcess
+                    )
+
                     Log.i(TAG, "Auto-embedding detected new/updated file: $fileName")
                     val result = repository.indexDocumentSafely(docFile)
                     if (result.isSuccess) {
@@ -348,9 +357,13 @@ class FolderMonitorWorker(
                     KEY_SCAN_MESSAGE to statusMsg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in folder monitor worker: ${e.message}", e)
             Result.retry()
+        } finally {
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_FOLDER_SCAN)
         }
     }
 }

@@ -175,6 +175,13 @@ class DownloadsFileObserverWorker(
                     )
                 )
 
+                IndexingNotifier.show(
+                    context,
+                    IndexingNotifier.ID_DOWNLOADS_SCAN,
+                    "Indexing downloads",
+                    "$fileName (${idx + 1}/$totalCandidates)",
+                    (idx * 100) / totalCandidates
+                )
                 val res = repository.indexDocumentSafely(docFile)
                 if (res.isSuccess) {
                     newlyDetectedFiles++
@@ -210,6 +217,13 @@ class DownloadsFileObserverWorker(
                         )
                     )
 
+                    IndexingNotifier.show(
+                        context,
+                        IndexingNotifier.ID_DOWNLOADS_SCAN,
+                        "Indexing downloads",
+                        "${file.name} (${idx + 1}/$totalPending)",
+                        (idx * 100) / totalPending
+                    )
                     val res = repository.indexDocumentSafely(docFile)
                     if (res.isSuccess) {
                         newlyDetectedFiles++
@@ -239,6 +253,8 @@ class DownloadsFileObserverWorker(
                     KEY_OBSERVER_MESSAGE to msg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in DownloadsFileObserverWorker: ${e.message}", e)
             Result.retry()
@@ -246,6 +262,7 @@ class DownloadsFileObserverWorker(
             try {
                 activeObserver?.stopWatching()
             } catch (_: Exception) {}
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_DOWNLOADS_SCAN)
         }
     }
 }

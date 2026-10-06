@@ -160,6 +160,13 @@ class PdfSyncWorker(
                 val percent = (((idx + 1).toFloat() / totalToProcess.toFloat()) * 100).toInt()
 
                 Log.i(TAG, "Syncing and indexing file ${idx + 1}/$totalToProcess: $fileName")
+                IndexingNotifier.show(
+                    context,
+                    IndexingNotifier.ID_PDF_SYNC,
+                    "Indexing downloaded documents",
+                    "$fileName (${idx + 1}/$totalToProcess)",
+                    (idx * 100) / totalToProcess
+                )
 
                 setProgress(
                     workDataOf(
@@ -202,9 +209,13 @@ class PdfSyncWorker(
                     KEY_SYNC_MESSAGE to successMsg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Fatal error inside PdfSyncWorker sync cycle: ${e.message}", e)
             Result.retry()
+        } finally {
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_PDF_SYNC)
         }
     }
 }
