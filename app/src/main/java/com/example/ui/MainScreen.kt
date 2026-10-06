@@ -126,7 +126,7 @@ import com.example.ui.components.AppNavigationDrawerContent
 import com.example.ui.components.AppUpdateBanner
 import com.example.ui.components.AppUpdateSheet
 import com.example.ui.components.ChatBackupSheet
-import com.example.ui.components.DocumentPreviewSheet
+import com.example.ui.components.DocumentDetailSheet
 import com.example.ui.components.FileObserverStatusIndicator
 import com.example.ui.components.FtsDocumentSearchComponent
 import com.example.ui.components.HardwareDashboardSheet
@@ -903,9 +903,9 @@ fun MainScreen(
         }
     }
 
-    // In-App Document Preview Modal Bottom Sheet
+    // Read-only, expandable document detail sheet (full content + metadata) opened from any search result
     selectedPreview?.let { preview ->
-        DocumentPreviewSheet(
+        DocumentDetailSheet(
             result = preview,
             repository = viewModel.repository,
             searchQuery = query,

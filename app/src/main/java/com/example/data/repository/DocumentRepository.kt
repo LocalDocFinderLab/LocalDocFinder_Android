@@ -41,6 +41,29 @@ data class DocumentPreviewContent(
     val imageBitmap: Bitmap? = null
 )
 
+/** One chunk of an indexed document with the overlap shared with the previous chunk trimmed away. */
+data class DocumentDetailChunk(
+    val chunkIndex: Int,
+    val text: String
+)
+
+/**
+ * Read-only view of an indexed document: its stored content plus metadata, for the detail sheet.
+ */
+data class DocumentDetail(
+    val fileUri: String,
+    val fileName: String,
+    val chunks: List<DocumentDetailChunk>,
+    val totalCharacters: Int,
+    val wordCount: Int,
+    val indexedAtMillis: Long,
+    val sourceModifiedMillis: Long?,
+    val sizeBytes: Long?,
+    val mimeType: String?,
+    val location: String,
+    val tags: List<String>
+)
+
 class DocumentRepository(
     private val context: Context
 ) {
@@ -253,6 +276,61 @@ class DocumentRepository(
     suspend fun indexDocument(docFile: DocumentFile, onProgress: ((Int, Int) -> Unit)? = null): Int {
         val result = indexDocumentSafely(docFile) { _, cur, tot -> onProgress?.invoke(cur, tot) }
         return result.chunksIndexed
+    }
+
+    /**
+     * Loads the full indexed content and metadata of a document from the local index (no file access needed
+     * for the text, so it works even if the original file has since been moved or deleted).
+     */
+    suspend fun loadDocumentDetail(fileUriStr: String, fileName: String): DocumentDetail = withContext(Dispatchers.IO) {
+        val dbChunks = dao.getChunksForFile(fileUriStr)
+        val stitchedTexts = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
+        val chunks = dbChunks.mapIndexed { i, c -> DocumentDetailChunk(c.chunkIndex, stitchedTexts[i]) }
+        val fullText = chunks.joinToString(" ") { it.text }
+
+        val uri = Uri.parse(fileUriStr)
+        var sizeBytes: Long? = null
+        var modifiedMillis: Long? = null
+        try {
+            if (uri.scheme == "file") {
+                val f = File(uri.path ?: "")
+                if (f.exists()) {
+                    sizeBytes = f.length()
+                    modifiedMillis = f.lastModified().takeIf { it > 0L }
+                }
+            } else {
+                DocumentFile.fromSingleUri(context, uri)?.takeIf { it.exists() }?.let {
+                    sizeBytes = it.length().takeIf { len -> len > 0L }
+                    modifiedMillis = it.lastModified().takeIf { ts -> ts > 0L }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val mime = try {
+            context.contentResolver.getType(uri)
+        } catch (_: Exception) {
+            null
+        }
+
+        val dbTags = dao.getTagsForFile(fileUriStr)
+        val tags = dbTags.ifEmpty {
+            dbChunks.firstOrNull()?.tags?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+        }
+
+        DocumentDetail(
+            fileUri = fileUriStr,
+            fileName = fileName,
+            chunks = chunks,
+            totalCharacters = fullText.length,
+            wordCount = if (fullText.isBlank()) 0 else fullText.trim().split(Regex("""\s+""")).size,
+            indexedAtMillis = dbChunks.maxOfOrNull { it.timestamp } ?: 0L,
+            sourceModifiedMillis = modifiedMillis,
+            sizeBytes = sizeBytes,
+            mimeType = mime,
+            location = if (uri.scheme == "file") (uri.path ?: fileUriStr) else Uri.decode(fileUriStr),
+            tags = tags
+        )
     }
 
     /**
