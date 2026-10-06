@@ -202,6 +202,13 @@ class FolderMonitorWorker(
         }
     }
 
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        return IndexingNotifier.foregroundInfo(
+            IndexingNotifier.ID_FOLDER_SCAN,
+            IndexingNotifier.build(context, "Indexing new documents", "Scanning monitored folders…", null)
+        )
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (com.example.worker.IndexingController.isStoppedByUser(context)) {
             Log.i(TAG, "Indexing is stopped by the user. Skipping.")
@@ -218,6 +225,8 @@ class FolderMonitorWorker(
             Log.i(TAG, "Gaming Mode is active. Indexing suspended to protect game performance.")
             return@withContext Result.success(workDataOf(KEY_SCAN_MESSAGE to "Skipped: Gaming mode active"))
         }
+
+        var wakeLock: PowerManager.WakeLock? = null
 
         try {
             val repository = DocumentRepository(context)
@@ -284,26 +293,35 @@ class FolderMonitorWorker(
 
             // 4. Trigger document indexing for each detected new or updated file
             if (filesToProcess.isNotEmpty()) {
+                wakeLock = IndexingWakeLock.acquire(context, TAG)
+                try {
+                    setForeground(getForegroundInfo())
+                } catch (_: Throwable) {
+                    IndexingNotifier.show(context, IndexingNotifier.ID_FOLDER_SCAN, "Indexing new documents", "Processing new files…", 0)
+                }
+
                 val totalToProcess = filesToProcess.size
                 for ((idx, docFile) in filesToProcess.withIndex()) {
                     if (isStopped) {
-                        Log.i(TAG, "Folder monitoring stopped by system. Will retry.")
-                        return@withContext Result.retry()
+                        Log.i(TAG, "Folder monitoring stopped by system.")
+                        return@withContext if (IndexingController.isStoppedByUser(context)) Result.success() else Result.retry()
                     }
                     val fileName = docFile.name ?: "Document"
                     val pct = (((idx + 1).toFloat() / totalToProcess.toFloat()) * 100).toInt()
-                    setProgress(
-                        workDataOf(
-                            KEY_NEW_FILES_INDEXED to newlyIndexedFiles,
-                            KEY_NEW_CHUNKS_INDEXED to newlyIndexedChunks,
-                            "current_file" to fileName,
-                            "phase" to "Monitored Folder: Indexing file ${idx + 1}/$totalToProcess",
-                            "processed_count" to (idx + 1),
-                            "total_count" to totalToProcess,
-                            "percent" to pct,
-                            "is_running" to true
+                    try {
+                        setProgress(
+                            workDataOf(
+                                KEY_NEW_FILES_INDEXED to newlyIndexedFiles,
+                                KEY_NEW_CHUNKS_INDEXED to newlyIndexedChunks,
+                                "current_file" to fileName,
+                                "phase" to "Monitored Folder: Indexing file ${idx + 1}/$totalToProcess",
+                                "processed_count" to (idx + 1),
+                                "total_count" to totalToProcess,
+                                "percent" to pct,
+                                "is_running" to true
+                            )
                         )
-                    )
+                    } catch (_: Throwable) {}
 
                     // Only shown while there is real work: idle background checks never touch the status bar.
                     IndexingNotifier.show(
@@ -315,12 +333,16 @@ class FolderMonitorWorker(
                     )
 
                     Log.i(TAG, "Auto-embedding detected new/updated file: $fileName")
-                    val result = repository.indexDocumentSafely(docFile)
-                    if (result.isSuccess) {
-                        newlyIndexedChunks += result.chunksIndexed
-                        newlyIndexedFiles++
-                    } else {
-                        Log.w(TAG, "Failed to auto-index $fileName: ${result.errorMessage}")
+                    try {
+                        val result = repository.indexDocumentSafely(docFile)
+                        if (result.isSuccess) {
+                            newlyIndexedChunks += result.chunksIndexed
+                            newlyIndexedFiles++
+                        } else {
+                            Log.w(TAG, "Failed to auto-index $fileName, proceeding to next file: ${result.errorMessage}")
+                        }
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Unexpected error indexing $fileName, skipping to next file: ${t.message}", t)
                     }
                 }
 
@@ -360,6 +382,7 @@ class FolderMonitorWorker(
             Log.e(TAG, "Error in folder monitor worker: ${e.message}", e)
             Result.retry()
         } finally {
+            IndexingWakeLock.release(wakeLock, TAG)
             IndexingNotifier.cancel(context, IndexingNotifier.ID_FOLDER_SCAN)
         }
     }

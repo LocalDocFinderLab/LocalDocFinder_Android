@@ -410,32 +410,38 @@ object PdfTextExtractor {
         val maxDecompressSize = 512 * 1024 // 512KB limit per stream prevents memory exhaustion
         return try {
             val inflater = Inflater(false)
-            inflater.setInput(data)
-            val buffer = ByteArray(4096)
-            val out = ByteArrayOutputStream()
-            while (!inflater.finished() && out.size() < maxDecompressSize) {
-                val count = inflater.inflate(buffer)
-                if (count == 0 && inflater.needsInput()) break
-                out.write(buffer, 0, count)
-            }
-            inflater.end()
-            val res = out.toByteArray()
-            if (res.isNotEmpty()) res else null
-        } catch (_: Exception) {
             try {
-                val inflater = Inflater(true)
-                val offset = if (data.size > 2 && (data[0].toInt() and 0xFF) == 0x78) 2 else 0
-                inflater.setInput(data, offset, data.size - offset)
+                inflater.setInput(data)
                 val buffer = ByteArray(4096)
                 val out = ByteArrayOutputStream()
                 while (!inflater.finished() && out.size() < maxDecompressSize) {
                     val count = inflater.inflate(buffer)
-                    if (count == 0 && inflater.needsInput()) break
+                    if (count <= 0) break
                     out.write(buffer, 0, count)
                 }
-                inflater.end()
                 val res = out.toByteArray()
                 if (res.isNotEmpty()) res else null
+            } finally {
+                inflater.end()
+            }
+        } catch (_: Exception) {
+            try {
+                val inflater = Inflater(true)
+                try {
+                    val offset = if (data.size > 2 && (data[0].toInt() and 0xFF) == 0x78) 2 else 0
+                    inflater.setInput(data, offset, data.size - offset)
+                    val buffer = ByteArray(4096)
+                    val out = ByteArrayOutputStream()
+                    while (!inflater.finished() && out.size() < maxDecompressSize) {
+                        val count = inflater.inflate(buffer)
+                        if (count <= 0) break
+                        out.write(buffer, 0, count)
+                    }
+                    val res = out.toByteArray()
+                    if (res.isNotEmpty()) res else null
+                } finally {
+                    inflater.end()
+                }
             } catch (_: Exception) {
                 null
             }

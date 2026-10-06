@@ -52,6 +52,7 @@ class DocumentIndexWorker(
         val shouldIndexEntireSystem = inputData.getBoolean(KEY_INDEX_ENTIRE_SYSTEM, false)
         val fileUriStrings = inputData.getStringArray(KEY_FILE_URIS)
 
+        val wakeLock = IndexingWakeLock.acquire(context, TAG)
         try {
             startForegroundSafely("Starting offline indexer…", "Initializing LiteRT pipeline")
 
@@ -244,6 +245,7 @@ class DocumentIndexWorker(
                 )
             )
         } finally {
+            IndexingWakeLock.release(wakeLock, TAG)
             // Whatever the outcome (done, failed, cancelled) the status-bar notification goes away on its own.
             IndexingNotifier.cancel(context, IndexingNotifier.ID_DOCUMENT_INDEX)
         }
@@ -288,8 +290,8 @@ class DocumentIndexWorker(
                     if (index >= total) return@async
 
                     val docFile = files[index]
-                    val fileName = docFile.name ?: "Document"
-                    val fileUri = docFile.uri.toString()
+                    val fileName = try { docFile.name ?: "Document" } catch (_: Throwable) { "Document" }
+                    val fileUri = try { docFile.uri.toString() } catch (_: Throwable) { continue }
 
                     if (com.example.engine.FailedDocumentRegistry.isQuarantined(context, fileUri)) {
                         failures.add("$fileName: Skipped (Quarantined)")
@@ -297,28 +299,35 @@ class DocumentIndexWorker(
                         continue
                     }
 
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val done = completed.get()
-                        val percent = (((done + subFactor) / total.toFloat()) * 100).toInt().coerceIn(0, 99)
-                        val ordinal = (done + 1).coerceAtMost(total)
-                        postProgress(percent, title(ordinal, total, percent), withSpeed("$fileName • $step"))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to ordinal,
-                                KEY_PROGRESS_TOTAL to total,
-                                KEY_PROGRESS_PERCENT to percent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
+                    try {
+                        val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
+                            val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
+                            val done = completed.get()
+                            val percent = (((done + subFactor) / total.toFloat()) * 100).toInt().coerceIn(0, 99)
+                            val ordinal = (done + 1).coerceAtMost(total)
+                            postProgress(percent, title(ordinal, total, percent), withSpeed("$fileName • $step"))
+                            try {
+                                setProgressAsync(
+                                    workDataOf(
+                                        KEY_PROGRESS_CURRENT to ordinal,
+                                        KEY_PROGRESS_TOTAL to total,
+                                        KEY_PROGRESS_PERCENT to percent,
+                                        KEY_CURRENT_FILE to fileName,
+                                        KEY_CURRENT_PHASE to step
+                                    )
+                                )
+                            } catch (_: Throwable) {}
+                        }
+                        if (result.isSuccess) {
+                            chunks.addAndGet(result.chunksIndexed)
+                        } else {
+                            failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
+                        }
+                    } catch (t: Throwable) {
+                        failures.add("$fileName: Unexpected failure (${t.message ?: t.javaClass.simpleName})")
+                    } finally {
+                        completed.incrementAndGet()
                     }
-                    if (result.isSuccess) {
-                        chunks.addAndGet(result.chunksIndexed)
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                    completed.incrementAndGet()
                 }
             }
         }
@@ -357,23 +366,14 @@ class DocumentIndexWorker(
     }
 
     /**
-     * Updates the notification's progress. Progress callbacks fire many times per second, so updates are
-     * throttled to twice a second; this also keeps late updates from re-showing a notification after the work ended.
+     * Updates the notification's progress safely via NotificationManager directly.
+     * Throttled to twice per second to prevent notification binder queue congestion.
      */
     private fun postProgress(progressPercent: Int, title: String, message: String) {
         if (isStopped) return
         val now = System.currentTimeMillis()
         if (now - lastPostedAtMillis < 500L) return
         lastPostedAtMillis = now
-        try {
-            setForegroundAsync(
-                IndexingNotifier.foregroundInfo(
-                    IndexingNotifier.ID_DOCUMENT_INDEX,
-                    IndexingNotifier.build(context, title, message, progressPercent)
-                )
-            )
-        } catch (_: Exception) {
-            IndexingNotifier.show(context, IndexingNotifier.ID_DOCUMENT_INDEX, title, message, progressPercent)
-        }
+        IndexingNotifier.show(context, IndexingNotifier.ID_DOCUMENT_INDEX, title, message, progressPercent)
     }
 }

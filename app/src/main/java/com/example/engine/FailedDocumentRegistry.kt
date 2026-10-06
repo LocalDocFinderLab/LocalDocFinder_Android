@@ -91,17 +91,17 @@ object FailedDocumentRegistry {
                 .remove(KEY_IN_PROGRESS_URI)
                 .remove(KEY_IN_PROGRESS_NAME)
                 .remove(KEY_IN_PROGRESS_TIME)
-                .putBoolean(KEY_SAFE_MODE, true)
+                .putBoolean(KEY_SAFE_MODE, false)
                 .putString(
                     KEY_CRASH_AVERTED_MSG,
-                    "Crash loop averted: '$inFlightName' caused an unexpected crash and was quarantined."
+                    "Crash averted: '$inFlightName' caused an unexpected termination and was quarantined. Continuing with other files."
                 )
                 .apply()
 
-            _safeModeActive.value = true
-            _crashAvertedNotice.value = "Safe Mode: '$inFlightName' caused an unexpected crash and was quarantined."
+            _safeModeActive.value = false
+            _crashAvertedNotice.value = "Quarantined '$inFlightName' to prevent crashes. Indexing can proceed safely."
         } else {
-            _safeModeActive.value = prefs.getBoolean(KEY_SAFE_MODE, false)
+            _safeModeActive.value = false
             _crashAvertedNotice.value = prefs.getString(KEY_CRASH_AVERTED_MSG, null)
         }
 

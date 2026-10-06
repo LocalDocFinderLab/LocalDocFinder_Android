@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.data.local.AppDatabase
 import com.example.data.local.DocumentChunkEntity
@@ -22,6 +23,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+
+private const val TAG = "DocumentRepository"
 
 data class IndexDocResult(
     val fileName: String,
@@ -211,8 +214,8 @@ class DocumentRepository(
         docFile: DocumentFile,
         onSubProgress: ((step: String, current: Int, total: Int) -> Unit)? = null
     ): IndexDocResult = withContext(Dispatchers.IO) {
-        val fileName = docFile.name ?: "Unknown"
-        val fileUri = docFile.uri.toString()
+        val fileName = try { docFile.name ?: "Unknown" } catch (_: Throwable) { "Unknown" }
+        val fileUri = try { docFile.uri.toString() } catch (_: Throwable) { return@withContext IndexDocResult(fileName, "", false, 0, "Invalid URI") }
 
         // 1. Crash loop quarantine check: skip if marked problematic or fatally crashed
         if (com.example.engine.FailedDocumentRegistry.isQuarantined(context, fileUri)) {
@@ -227,19 +230,20 @@ class DocumentRepository(
         }
 
         // Unchanged since it was last indexed: skip the expensive parse + embedding entirely.
-        // Chunks store the source file's modified time, so equal-or-older means nothing changed.
-        val sourceModified = docFile.lastModified()
+        val sourceModified = try { docFile.lastModified() } catch (_: Throwable) { 0L }
         if (sourceModified > 0L) {
-            val stamp = dao.getFileIndexStamp(fileUri)
-            val lastIndexed = stamp.lastIndexed
-            if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed) {
-                onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
-                return@withContext IndexDocResult(
-                    fileName = fileName,
-                    fileUri = fileUri,
-                    isSuccess = true,
-                    chunksIndexed = stamp.chunkCount
-                )
+            val stamp = try { dao.getFileIndexStamp(fileUri) } catch (_: Throwable) { null }
+            if (stamp != null) {
+                val lastIndexed = stamp.lastIndexed
+                if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed) {
+                    onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
+                    return@withContext IndexDocResult(
+                        fileName = fileName,
+                        fileUri = fileUri,
+                        isSuccess = true,
+                        chunksIndexed = stamp.chunkCount
+                    )
+                }
             }
         }
 
@@ -247,104 +251,133 @@ class DocumentRepository(
         com.example.engine.FailedDocumentRegistry.markProcessingStart(context, fileUri, fileName)
 
         try {
-            onSubProgress?.invoke("Parsing $fileName…", 0, 100)
-            val parseResult = documentParser.parseDocumentSafely(docFile)
-            if (parseResult is ParseResult.Failure) {
+            // Apply a strict per-file timeout (60 seconds) so no single PDF or corrupt file can freeze indexing
+            val result = kotlinx.coroutines.withTimeoutOrNull(60_000L) {
+                onSubProgress?.invoke("Parsing $fileName…", 0, 100)
+                val parseResult = documentParser.parseDocumentSafely(docFile)
+                if (parseResult is ParseResult.Failure) {
+                    com.example.engine.FailedDocumentRegistry.recordFailure(
+                        context,
+                        fileUri,
+                        fileName,
+                        parseResult.reason
+                    )
+                    return@withTimeoutOrNull IndexDocResult(
+                        fileName = fileName,
+                        fileUri = fileUri,
+                        isSuccess = false,
+                        chunksIndexed = 0,
+                        errorMessage = parseResult.reason
+                    )
+                }
+
+                val parsed = (parseResult as ParseResult.Success).document
+                val existingChunks = try { dao.getChunksForFile(parsed.fileUri) } catch (_: Throwable) { emptyList() }
+                val existingHashMap = existingChunks.associateBy { it.hash }
+
+                val chunksToEmbed = mutableListOf<com.example.engine.ParsedChunk>()
+                val finalEntities = mutableListOf<DocumentChunkEntity>()
+                val fileTimestamp = if (sourceModified > 0) sourceModified else System.currentTimeMillis()
+
+                // Cap total chunks per document to 600 to prevent mobile memory exhaustion on massive documents
+                val chunksToProcess = parsed.chunks.take(600)
+
+                for (chunk in chunksToProcess) {
+                    val existing = existingHashMap[chunk.hash]
+                    if (existing != null) {
+                        finalEntities.add(existing.copy(timestamp = fileTimestamp))
+                    } else {
+                        chunksToEmbed.add(chunk)
+                    }
+                }
+
+                if (chunksToEmbed.isNotEmpty()) {
+                    var start = 0
+                    while (start < chunksToEmbed.size) {
+                        com.example.engine.HardwareMonitor.checkPausePoint()
+                        val batchSize = com.example.engine.IndexingPowerPolicy.current().batchSize.coerceAtLeast(1)
+                        val end = minOf(start + batchSize, chunksToEmbed.size)
+                        val batchChunks = chunksToEmbed.subList(start, end)
+
+                        onSubProgress?.invoke(
+                            "Embedding chunks ${start + 1}-$end of ${chunksToEmbed.size}",
+                            end,
+                            chunksToEmbed.size
+                        )
+
+                        val texts = batchChunks.map { it.text }
+                        val activeModelName = modelManager.getActiveModel().shortName
+                        val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = batchSize)
+                        val embeddings = tagged.vectors
+
+                        for (i in batchChunks.indices) {
+                            val c = batchChunks[i]
+                            val emb = if (i < embeddings.size) embeddings[i] else FloatArray(modelManager.getActiveModel().dimensions)
+                            val blob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(emb)
+
+                            finalEntities.add(
+                                DocumentChunkEntity(
+                                    fileUri = parsed.fileUri,
+                                    fileName = parsed.fileName,
+                                    chunkIndex = c.index,
+                                    chunkText = c.text,
+                                    hash = c.hash,
+                                    timestamp = fileTimestamp,
+                                    embeddingBlob = blob,
+                                    metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
+                                )
+                            )
+                        }
+                        start = end
+                    }
+                }
+
+                onSubProgress?.invoke("Writing vectors to database…", 95, 100)
+                try {
+                    dao.deleteFileRecord(parsed.fileUri)
+                    dao.insertChunksWithFts(finalEntities)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Database insert failure for $fileName: ${e.message}")
+                    return@withTimeoutOrNull IndexDocResult(
+                        fileName = fileName,
+                        fileUri = fileUri,
+                        isSuccess = false,
+                        chunksIndexed = 0,
+                        errorMessage = "Database error: ${e.localizedMessage ?: e.javaClass.simpleName}"
+                    )
+                }
+                onSubProgress?.invoke("Finished $fileName", 100, 100)
+
+                // Successfully finished: record success and clear canary
+                com.example.engine.FailedDocumentRegistry.recordSuccess(context, fileUri)
+
+                IndexDocResult(
+                    fileName = fileName,
+                    fileUri = fileUri,
+                    isSuccess = true,
+                    chunksIndexed = finalEntities.size
+                )
+            }
+
+            if (result != null) {
+                result
+            } else {
+                val timeoutReason = "Processing timed out after 60 seconds (abandoned to protect indexing pipeline)"
+                Log.w(TAG, "Document $fileName ($fileUri) timed out during indexing.")
                 com.example.engine.FailedDocumentRegistry.recordFailure(
                     context,
                     fileUri,
                     fileName,
-                    parseResult.reason
+                    timeoutReason
                 )
-                return@withContext IndexDocResult(
+                IndexDocResult(
                     fileName = fileName,
                     fileUri = fileUri,
                     isSuccess = false,
                     chunksIndexed = 0,
-                    errorMessage = parseResult.reason
+                    errorMessage = timeoutReason
                 )
             }
-
-            val parsed = (parseResult as ParseResult.Success).document
-            val existingChunks = dao.getChunksForFile(parsed.fileUri)
-            val existingHashMap = existingChunks.associateBy { it.hash }
-
-            val chunksToEmbed = mutableListOf<com.example.engine.ParsedChunk>()
-            val finalEntities = mutableListOf<DocumentChunkEntity>()
-            val fileTimestamp = if (sourceModified > 0) sourceModified else System.currentTimeMillis()
-
-            for (chunk in parsed.chunks) {
-                val existing = existingHashMap[chunk.hash]
-                if (existing != null) {
-                    // Reused chunk: refresh its timestamp, otherwise a touched-but-unchanged file looks modified forever.
-                    finalEntities.add(existing.copy(timestamp = fileTimestamp))
-                } else {
-                    chunksToEmbed.add(chunk)
-                }
-            }
-
-            if (chunksToEmbed.isNotEmpty()) {
-                var start = 0
-                while (start < chunksToEmbed.size) {
-                    com.example.engine.HardwareMonitor.checkPausePoint()
-                    // Batch size follows the live power policy: large while charging & idle, small when the
-                    // user is active or the device is hot.
-                    val batchSize = com.example.engine.IndexingPowerPolicy.current().batchSize.coerceAtLeast(1)
-                    val end = minOf(start + batchSize, chunksToEmbed.size)
-                    val batchChunks = chunksToEmbed.subList(start, end)
-
-                    onSubProgress?.invoke(
-                        "NPU Batch: embedding chunks ${start + 1}-$end of ${chunksToEmbed.size} as single tensor",
-                        end,
-                        chunksToEmbed.size
-                    )
-
-                    val texts = batchChunks.map { it.text }
-                    val activeModelName = modelManager.getActiveModel().shortName
-                    onSubProgress?.invoke(
-                        "Model [$activeModelName]: embedding chunks ${start + 1}-$end of ${chunksToEmbed.size}",
-                        end,
-                        chunksToEmbed.size
-                    )
-                    val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = batchSize)
-                    val embeddings = tagged.vectors
-
-                    for (i in batchChunks.indices) {
-                        val c = batchChunks[i]
-                        val emb = embeddings[i]
-                        val blob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(emb)
-
-                        finalEntities.add(
-                            DocumentChunkEntity(
-                                fileUri = parsed.fileUri,
-                                fileName = parsed.fileName,
-                                chunkIndex = c.index,
-                                chunkText = c.text,
-                                hash = c.hash,
-                                timestamp = fileTimestamp,
-                                embeddingBlob = blob,
-                                metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
-                            )
-                        )
-                    }
-                    start = end
-                }
-            }
-
-            onSubProgress?.invoke("Writing vectors to SQLite…", 95, 100)
-            dao.deleteFileRecord(parsed.fileUri)
-            dao.insertChunksWithFts(finalEntities)
-            onSubProgress?.invoke("Finished $fileName", 100, 100)
-
-            // Successfully finished: record success and clear canary
-            com.example.engine.FailedDocumentRegistry.recordSuccess(context, fileUri)
-
-            IndexDocResult(
-                fileName = fileName,
-                fileUri = fileUri,
-                isSuccess = true,
-                chunksIndexed = finalEntities.size
-            )
         } catch (t: Throwable) {
             val isOom = (t is OutOfMemoryError)
             if (isOom) System.gc()

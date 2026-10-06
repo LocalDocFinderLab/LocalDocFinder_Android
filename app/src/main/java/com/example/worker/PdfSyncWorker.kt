@@ -87,6 +87,13 @@ class PdfSyncWorker(
         }
     }
 
+    override suspend fun getForegroundInfo(): androidx.work.ForegroundInfo {
+        return IndexingNotifier.foregroundInfo(
+            IndexingNotifier.ID_PDF_SYNC,
+            IndexingNotifier.build(context, "Indexing downloaded documents", "Syncing PDFs in Downloads…", null)
+        )
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (com.example.worker.IndexingController.isStoppedByUser(context)) {
             Log.i(TAG, "Indexing is stopped by the user. Skipping.")
@@ -97,6 +104,7 @@ class PdfSyncWorker(
         val repository = DocumentRepository(context)
         val parser = DocumentParser(context)
         val dao = AppDatabase.getInstance(context).documentChunkDao()
+        val wakeLock = IndexingWakeLock.acquire(context, TAG)
 
         var filesIndexedCount = 0
         var chunksIndexedCount = 0
@@ -112,7 +120,6 @@ class PdfSyncWorker(
             }
 
             Log.i(TAG, "Crawling Downloads directory: ${downloadsDir.absolutePath}")
-            val downloadsDoc = DocumentFile.fromFile(downloadsDir)
 
             // 2. Discover all documents using PDF Crawler file discovery logic
             val discoveredFiles = parser.scanDownloadDirectory()
@@ -129,9 +136,10 @@ class PdfSyncWorker(
             val indexedUris = dao.getIndexedFilesDirect().toSet()
             Log.i(TAG, "Room Database currently contains ${indexedUris.size} unique indexed document URIs.")
 
-            // Identify un-indexed files
+            // Identify un-indexed files, explicitly skipping quarantined files
             val unindexedFiles = pdfAndDocs.filter { doc ->
-                !indexedUris.contains(doc.uri.toString())
+                val uriStr = doc.uri.toString()
+                !indexedUris.contains(uriStr) && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, uriStr)
             }
             Log.i(TAG, "Detected ${unindexedFiles.size} new unindexed documents to process.")
 
@@ -147,12 +155,19 @@ class PdfSyncWorker(
                 )
             }
 
+            // Elevate worker to foreground if possible to prevent OS killing it in the background
+            try {
+                setForeground(getForegroundInfo())
+            } catch (_: Throwable) {
+                IndexingNotifier.show(context, IndexingNotifier.ID_PDF_SYNC, "Indexing downloaded documents", "Starting background sync…", 0)
+            }
+
             // 4. Index each un-indexed document through the vector embedding engine
             val totalToProcess = unindexedFiles.size
             for ((idx, docFile) in unindexedFiles.withIndex()) {
                 if (isStopped) {
                     Log.i(TAG, "PdfSyncWorker stopped by the operating system / WorkManager.")
-                    return@withContext Result.retry()
+                    return@withContext if (IndexingController.isStoppedByUser(context)) Result.success() else Result.retry()
                 }
 
                 val fileName = docFile.name ?: "Unnamed PDF"
@@ -167,27 +182,33 @@ class PdfSyncWorker(
                     (idx * 100) / totalToProcess
                 )
 
-                setProgress(
-                    workDataOf(
-                        KEY_NEW_FILES_INDEXED to filesIndexedCount,
-                        KEY_NEW_CHUNKS_INDEXED to chunksIndexedCount,
-                        "current_file" to fileName,
-                        "phase" to "Downloads Sync: Parsing and generating vector embeddings",
-                        "processed_count" to (idx + 1),
-                        "total_count" to totalToProcess,
-                        "percent" to percent,
-                        "is_running" to true
+                try {
+                    setProgress(
+                        workDataOf(
+                            KEY_NEW_FILES_INDEXED to filesIndexedCount,
+                            KEY_NEW_CHUNKS_INDEXED to chunksIndexedCount,
+                            "current_file" to fileName,
+                            "phase" to "Downloads Sync: Parsing and generating vector embeddings",
+                            "processed_count" to (idx + 1),
+                            "total_count" to totalToProcess,
+                            "percent" to percent,
+                            "is_running" to true
+                        )
                     )
-                )
+                } catch (_: Throwable) {}
 
-                // Trigger indexing safely using document repository
-                val result = repository.indexDocumentSafely(docFile)
-                if (result.isSuccess) {
-                    filesIndexedCount++
-                    chunksIndexedCount += result.chunksIndexed
-                    Log.i(TAG, "Successfully index-synced $fileName. Generated ${result.chunksIndexed} vector embeddings.")
-                } else {
-                    Log.e(TAG, "Failed to index-synced $fileName: ${result.errorMessage}")
+                // Trigger indexing safely using document repository with individual error isolation
+                try {
+                    val result = repository.indexDocumentSafely(docFile)
+                    if (result.isSuccess) {
+                        filesIndexedCount++
+                        chunksIndexedCount += result.chunksIndexed
+                        Log.i(TAG, "Successfully index-synced $fileName. Generated ${result.chunksIndexed} vector embeddings.")
+                    } else {
+                        Log.w(TAG, "Skipping to next document; failed to index $fileName: ${result.errorMessage}")
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Unexpected error indexing $fileName, moving to next PDF: ${t.message}", t)
                 }
             }
 
@@ -211,9 +232,10 @@ class PdfSyncWorker(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Fatal error inside PdfSyncWorker sync cycle: ${e.message}", e)
+            Log.e(TAG, "Error inside PdfSyncWorker sync cycle: ${e.message}", e)
             Result.retry()
         } finally {
+            IndexingWakeLock.release(wakeLock, TAG)
             IndexingNotifier.cancel(context, IndexingNotifier.ID_PDF_SYNC)
         }
     }

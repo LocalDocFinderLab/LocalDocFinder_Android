@@ -148,6 +148,7 @@ class DownloadsFileObserverWorker(
         activeObserver = fileObserver
         fileObserver.startWatching()
 
+        val wakeLock = IndexingWakeLock.acquire(context, "DownloadsFileObserverWorker")
         try {
             // Also perform a sweep scan of existing un-indexed files in Downloads
             val parser = com.example.engine.DocumentParser(context)
@@ -156,37 +157,44 @@ class DownloadsFileObserverWorker(
             val dao = com.example.data.local.AppDatabase.getInstance(context).documentChunkDao()
             val indexedUris = dao.getIndexedFilesDirect().toSet()
 
-            val unindexedCandidates = candidateFilesMap.filterKeys { !indexedUris.contains(it) }.values.toList()
+            val unindexedCandidates = candidateFilesMap.filterKeys { uri ->
+                !indexedUris.contains(uri) && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, uri)
+            }.values.toList()
             val totalCandidates = unindexedCandidates.size
 
             for ((idx, docFile) in unindexedCandidates.withIndex()) {
-                val fileName = docFile.name ?: "Downloaded Document"
-                val pct = if (totalCandidates > 0) (((idx + 1).toFloat() / totalCandidates.toFloat()) * 100).toInt() else 0
-                setProgress(
-                    workDataOf(
-                        KEY_NEW_FILES_INDEXED to newlyDetectedFiles,
-                        KEY_NEW_CHUNKS_INDEXED to newlyDetectedChunks,
-                        "current_file" to fileName,
-                        "phase" to "Downloads FileObserver: Processing downloaded file",
-                        "processed_count" to (idx + 1),
-                        "total_count" to totalCandidates,
-                        "percent" to pct,
-                        "is_running" to true
+                if (isStopped) break
+                try {
+                    val fileName = docFile.name ?: "Downloaded Document"
+                    val pct = if (totalCandidates > 0) (((idx + 1).toFloat() / totalCandidates.toFloat()) * 100).toInt() else 0
+                    setProgress(
+                        workDataOf(
+                            KEY_NEW_FILES_INDEXED to newlyDetectedFiles,
+                            KEY_NEW_CHUNKS_INDEXED to newlyDetectedChunks,
+                            "current_file" to fileName,
+                            "phase" to "Downloads FileObserver: Processing downloaded file",
+                            "processed_count" to (idx + 1),
+                            "total_count" to totalCandidates,
+                            "percent" to pct,
+                            "is_running" to true
+                        )
                     )
-                )
 
-                IndexingNotifier.show(
-                    context,
-                    IndexingNotifier.ID_DOWNLOADS_SCAN,
-                    "Indexing downloads",
-                    "$fileName (${idx + 1}/$totalCandidates)",
-                    (idx * 100) / totalCandidates
-                )
-                val res = repository.indexDocumentSafely(docFile)
-                if (res.isSuccess) {
-                    newlyDetectedFiles++
-                    newlyDetectedChunks += res.chunksIndexed
-                    Log.i(TAG, "Auto-embedded downloaded file: ${docFile.name}")
+                    IndexingNotifier.show(
+                        context,
+                        IndexingNotifier.ID_DOWNLOADS_SCAN,
+                        "Indexing downloads",
+                        "$fileName (${idx + 1}/$totalCandidates)",
+                        (idx * 100) / totalCandidates
+                    )
+                    val res = repository.indexDocumentSafely(docFile)
+                    if (res.isSuccess) {
+                        newlyDetectedFiles++
+                        newlyDetectedChunks += res.chunksIndexed
+                        Log.i(TAG, "Auto-embedded downloaded file: ${docFile.name}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error processing candidate downloaded file ${docFile.name}: ${e.message}")
                 }
             }
 
@@ -201,35 +209,41 @@ class DownloadsFileObserverWorker(
 
             val totalPending = pendingFilesToProcess.size
             for ((idx, file) in pendingFilesToProcess.withIndex()) {
-                val docFile = DocumentFile.fromFile(file)
-                if (docFile.exists() && !indexedUris.contains(docFile.uri.toString())) {
-                    val pct = if (totalPending > 0) (((idx + 1).toFloat() / totalPending.toFloat()) * 100).toInt() else 0
-                    setProgress(
-                        workDataOf(
-                            KEY_NEW_FILES_INDEXED to newlyDetectedFiles,
-                            KEY_NEW_CHUNKS_INDEXED to newlyDetectedChunks,
-                            "current_file" to file.name,
-                            "phase" to "FileObserver Event: Indexing ${file.name}",
-                            "processed_count" to (idx + 1),
-                            "total_count" to totalPending,
-                            "percent" to pct,
-                            "is_running" to true
+                if (isStopped) break
+                try {
+                    val docFile = DocumentFile.fromFile(file)
+                    val docUri = docFile.uri.toString()
+                    if (docFile.exists() && !indexedUris.contains(docUri) && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, docUri)) {
+                        val pct = if (totalPending > 0) (((idx + 1).toFloat() / totalPending.toFloat()) * 100).toInt() else 0
+                        setProgress(
+                            workDataOf(
+                                KEY_NEW_FILES_INDEXED to newlyDetectedFiles,
+                                KEY_NEW_CHUNKS_INDEXED to newlyDetectedChunks,
+                                "current_file" to file.name,
+                                "phase" to "FileObserver Event: Indexing ${file.name}",
+                                "processed_count" to (idx + 1),
+                                "total_count" to totalPending,
+                                "percent" to pct,
+                                "is_running" to true
+                            )
                         )
-                    )
 
-                    IndexingNotifier.show(
-                        context,
-                        IndexingNotifier.ID_DOWNLOADS_SCAN,
-                        "Indexing downloads",
-                        "${file.name} (${idx + 1}/$totalPending)",
-                        (idx * 100) / totalPending
-                    )
-                    val res = repository.indexDocumentSafely(docFile)
-                    if (res.isSuccess) {
-                        newlyDetectedFiles++
-                        newlyDetectedChunks += res.chunksIndexed
-                        Log.i(TAG, "Auto-embedded file via FileObserver event: ${file.name}")
+                        IndexingNotifier.show(
+                            context,
+                            IndexingNotifier.ID_DOWNLOADS_SCAN,
+                            "Indexing downloads",
+                            "${file.name} (${idx + 1}/$totalPending)",
+                            (idx * 100) / totalPending
+                        )
+                        val res = repository.indexDocumentSafely(docFile)
+                        if (res.isSuccess) {
+                            newlyDetectedFiles++
+                            newlyDetectedChunks += res.chunksIndexed
+                            Log.i(TAG, "Auto-embedded file via FileObserver event: ${file.name}")
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error processing detected file ${file.name}: ${e.message}")
                 }
             }
 
@@ -259,6 +273,7 @@ class DownloadsFileObserverWorker(
             Log.e(TAG, "Error in DownloadsFileObserverWorker: ${e.message}", e)
             Result.retry()
         } finally {
+            IndexingWakeLock.release(wakeLock)
             try {
                 activeObserver?.stopWatching()
             } catch (_: Exception) {}

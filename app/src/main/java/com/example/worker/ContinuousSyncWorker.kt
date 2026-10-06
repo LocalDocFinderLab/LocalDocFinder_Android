@@ -70,6 +70,7 @@ class ContinuousSyncWorker(
             return@withContext Result.success(workDataOf("skipped_reason" to "power_save_mode"))
         }
 
+        val wakeLock = IndexingWakeLock.acquire(context, "ContinuousSyncWorker")
         try {
             val indexedFiles = repository.indexedFiles.first()
             var newlyIndexedChunks = 0
@@ -80,10 +81,17 @@ class ContinuousSyncWorker(
                 val files = sampleFolder.listFiles() ?: emptyArray()
                 for (file in files) {
                     if (isStopped) return@withContext Result.retry()
-                    val docFile = androidx.documentfile.provider.DocumentFile.fromFile(file)
-                    val uriStr = docFile.uri.toString()
-                    if (uriStr !in indexedFiles && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, uriStr)) {
-                        newlyIndexedChunks += repository.indexDocument(docFile)
+                    try {
+                        val docFile = androidx.documentfile.provider.DocumentFile.fromFile(file)
+                        val uriStr = docFile.uri.toString()
+                        if (uriStr !in indexedFiles && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, uriStr)) {
+                            val res = repository.indexDocumentSafely(docFile)
+                            if (res.isSuccess) {
+                                newlyIndexedChunks += res.chunksIndexed
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error indexing sample file ${file.name}: ${e.message}")
                     }
                 }
             }
@@ -93,6 +101,8 @@ class ContinuousSyncWorker(
         } catch (e: Exception) {
             Log.e(TAG, "Continuous sync encountered error: ${e.message}", e)
             Result.retry()
+        } finally {
+            IndexingWakeLock.release(wakeLock)
         }
     }
 }

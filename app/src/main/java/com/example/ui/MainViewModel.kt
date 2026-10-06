@@ -973,6 +973,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Enqueues a manual indexing job. Explicitly starting indexing counts as the user turning it back on,
      * so the stopped flag is cleared and the periodic background scan is restored.
      */
+    private fun createIndexWorkRequest(data: androidx.work.Data): androidx.work.OneTimeWorkRequest {
+        return OneTimeWorkRequestBuilder<DocumentIndexWorker>()
+            .setInputData(data)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .addTag(DocumentIndexWorker.TAG)
+            .build()
+    }
+
     private fun enqueueIndexRequest(request: androidx.work.OneTimeWorkRequest, uniqueName: String) {
         IndexingController.resume(getApplication())
         workManager.enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
@@ -980,11 +988,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startIndexing(treeUri: Uri) {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_TREE_URI to treeUri.toString()))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_TREE_URI to treeUri.toString()))
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
@@ -992,11 +996,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Direct one-tap indexer for the Download folder, bypassing Android 11+ SAF folder privacy blocks.
      */
     fun indexDownloadsDirectory() {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_INDEX_DOWNLOADS to true))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_INDEX_DOWNLOADS to true))
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
@@ -1005,11 +1005,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * bypassing Android 11+ SAF tree privacy restrictions.
      */
     fun indexAndroidDirectory() {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_INDEX_ANDROID to true))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_INDEX_ANDROID to true))
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
@@ -1048,11 +1044,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * ignoring all system files, packages, databases, and videos. There is nothing to choose in a picker.
      */
     fun indexEntireSystemStorage() {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_INDEX_ENTIRE_SYSTEM to true))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_INDEX_ENTIRE_SYSTEM to true))
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
@@ -1062,11 +1054,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun indexSelectedFiles(uris: List<Uri>) {
         if (uris.isEmpty()) return
         val uriStrings = uris.map { it.toString() }.toTypedArray()
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_FILE_URIS to uriStrings))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_FILE_URIS to uriStrings))
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
@@ -1150,20 +1138,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSampleKnowledgeBase() {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_INDEX_SAMPLE to true))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(
+            workDataOf(DocumentIndexWorker.KEY_INDEX_SAMPLE to true)
+        )
         enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
     fun load100SampleFiles() {
-        val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
-            .setInputData(workDataOf(DocumentIndexWorker.KEY_INDEX_100_SAMPLES to true))
-            .addTag(DocumentIndexWorker.TAG)
-            .build()
-
+        val request = createIndexWorkRequest(
+            workDataOf(DocumentIndexWorker.KEY_INDEX_100_SAMPLES to true)
+        )
         enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
