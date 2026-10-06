@@ -177,6 +177,7 @@ fun MainScreen(
     val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
     val hardwareMetrics by viewModel.hardwareMetrics.collectAsStateWithLifecycle()
     val indexingSpeed by viewModel.indexingSpeed.collectAsStateWithLifecycle()
+    val fullSpeedEnabled by viewModel.fullSpeedEnabled.collectAsStateWithLifecycle()
     val isGamingModePaused by viewModel.isGamingModePaused.collectAsStateWithLifecycle()
     val includeChatBackups by viewModel.includeChatBackups.collectAsStateWithLifecycle()
     val chatIndexingProgress by viewModel.chatIndexingProgress.collectAsStateWithLifecycle()
@@ -192,7 +193,10 @@ fun MainScreen(
 
     // Model Management
     val activeEmbeddingModel by viewModel.activeEmbeddingModel.collectAsStateWithLifecycle()
-    val isGeminiConfigured by viewModel.isGeminiConfigured.collectAsStateWithLifecycle()
+    val effectiveEmbeddingModel by viewModel.effectiveEmbeddingModel.collectAsStateWithLifecycle()
+    val installedEmbeddingModels by viewModel.installedEmbeddingModels.collectAsStateWithLifecycle()
+    val staleChunkCount by viewModel.staleChunkCount.collectAsStateWithLifecycle()
+    val modelImportStatus by viewModel.modelImportStatus.collectAsStateWithLifecycle()
     val isReindexingModel by viewModel.isReindexingModel.collectAsStateWithLifecycle()
     val reindexingModelProgress by viewModel.reindexingModelProgress.collectAsStateWithLifecycle()
     val reindexingModelStatus by viewModel.reindexingModelStatus.collectAsStateWithLifecycle()
@@ -398,7 +402,7 @@ fun MainScreen(
                 includeChatBackups = includeChatBackups,
                 activeAvailableUpdate = activeAvailableUpdate,
                 isDarkTheme = isDarkTheme,
-                activeEmbeddingModel = activeEmbeddingModel,
+                activeEmbeddingModel = effectiveEmbeddingModel,
                 currentSortOrder = sortOrder,
                 onSelectSortOrder = { newSort ->
                     viewModel.setSortOrder(newSort)
@@ -793,7 +797,9 @@ fun MainScreen(
                                 }
                             },
                             modifier = Modifier.padding(vertical = 4.dp),
-                            speed = indexingSpeed
+                            speed = indexingSpeed,
+                            fullSpeedEnabled = fullSpeedEnabled,
+                            onToggleFullSpeed = { viewModel.setFullSpeed(it) }
                         )
 
                         // In-App Software Update Announcement Banner
@@ -1104,7 +1110,13 @@ fun MainScreen(
         val modelSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         com.example.ui.components.EmbeddingModelSheet(
             activeModel = activeEmbeddingModel,
-            isGeminiConfigured = isGeminiConfigured,
+            effectiveModel = effectiveEmbeddingModel,
+            installedModels = installedEmbeddingModels,
+            staleChunkCount = staleChunkCount,
+            importStatus = modelImportStatus,
+            onImportModel = { model, tflite, vocab -> viewModel.importEmbeddingModel(model, tflite, vocab) },
+            onRemoveModel = { model -> viewModel.removeEmbeddingModel(model) },
+            onImportProblem = { message -> viewModel.reportModelImportProblem(message) },
             isReindexing = isReindexingModel,
             reindexingProgress = reindexingModelProgress,
             reindexingStatus = reindexingModelStatus,
@@ -1113,7 +1125,7 @@ fun MainScreen(
             },
             onReindexClick = {
                 viewModel.reindexKnowledgeBaseWithActiveModel { count ->
-                    Toast.makeText(context, "Re-indexed $count chunks with ${activeEmbeddingModel.shortName}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Re-indexed $count chunks with ${effectiveEmbeddingModel.shortName}", Toast.LENGTH_LONG).show()
                 }
             },
             onTestBenchmark = { q, textA, textB ->

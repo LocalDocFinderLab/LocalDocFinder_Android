@@ -114,18 +114,20 @@ class HybridSearchEngine(
         val corpusSize = if (scanVectors) allChunks.size else dao.getTotalChunksCountDirect()
         if (corpusSize == 0) return@withContext emptyList()
 
+        // Only chunks embedded by the model that produced the query vector are comparable; the rest score 0
+        // here and are still found by keyword search until they are re-indexed.
+        // Without a model manager (a bare engine) there are no model tags to enforce, so everything is compared.
+        val queryModelId: String? = unifiedModelManager?.effectiveModelId()
+
         val vectorRanked = ArrayList<Pair<DocumentChunkEntity, Float>>(allChunks.size)
         for (chunk in allChunks) {
-            val chunkVec = VectorSimilarityUtils.byteArrayToFloatArray(chunk.embeddingBlob)
-            // If dimensions match, compute exact cosine similarity; if not, calculate with on-device fallback or padding
-            val sim = if (chunkVec.isNotEmpty() && chunkVec.size == queryEmbedding.size) {
-                VectorSimilarityUtils.calculateCosineSimilarity(queryEmbedding, chunkVec)
-            } else if (chunkVec.isNotEmpty()) {
-                val fallbackQueryVec = embeddingEngine.embedText(cleanQuery)
-                if (chunkVec.size == fallbackQueryVec.size) {
-                    VectorSimilarityUtils.calculateCosineSimilarity(fallbackQueryVec, chunkVec)
+            val sameModel = queryModelId == null || com.example.engine.extraction.ChunkMetadata.model(chunk.metadata) == queryModelId
+            val sim = if (sameModel) {
+                val chunkVec = VectorSimilarityUtils.byteArrayToFloatArray(chunk.embeddingBlob)
+                if (chunkVec.isNotEmpty() && chunkVec.size == queryEmbedding.size) {
+                    VectorSimilarityUtils.calculateCosineSimilarity(queryEmbedding, chunkVec)
                 } else {
-                    VectorSimilarityUtils.calculateCosineSimilarity(queryEmbedding.take(chunkVec.size).toFloatArray(), chunkVec)
+                    0f
                 }
             } else {
                 0f

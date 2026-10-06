@@ -91,7 +91,7 @@ fun AppNavigationDrawerContent(
     includeChatBackups: Boolean,
     activeAvailableUpdate: AppUpdateInfo?,
     isDarkTheme: Boolean,
-    activeEmbeddingModel: com.example.engine.model.EmbeddingModelType = com.example.engine.model.EmbeddingModelType.ON_DEVICE_NEURAL_BGE,
+    activeEmbeddingModel: com.example.engine.model.EmbeddingModelType = com.example.engine.model.EmbeddingModelType.DEFAULT,
     currentSortOrder: SearchSortOrder = SearchSortOrder.RELEVANCE,
     onSelectSortOrder: (SearchSortOrder) -> Unit = {},
     onOpenModelSheet: () -> Unit = {},

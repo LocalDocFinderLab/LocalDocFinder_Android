@@ -282,7 +282,7 @@ fun DocumentDetailSheet(
                         val isMatch = chunk.chunkIndex == result.chunkIndex && searchQuery.isNotBlank()
                         DocumentContentBlock(
                             text = chunk.text,
-                            label = "Section ${chunk.chunkIndex + 1}",
+                            label = "Section ${chunk.chunkIndex + 1}" + (chunk.pageLabel?.let { " · $it" } ?: ""),
                             isMatch = isMatch,
                             terms = result.highlightedTerms,
                             query = searchQuery

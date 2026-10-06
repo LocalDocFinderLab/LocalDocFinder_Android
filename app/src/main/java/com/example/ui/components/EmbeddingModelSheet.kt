@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,13 +26,10 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +40,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
@@ -55,11 +56,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import com.example.engine.model.EmbeddingModelType
 import kotlinx.coroutines.launch
 
@@ -67,7 +70,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun EmbeddingModelSheet(
     activeModel: EmbeddingModelType,
-    isGeminiConfigured: Boolean,
+    effectiveModel: EmbeddingModelType,
+    installedModels: Set<EmbeddingModelType>,
+    staleChunkCount: Int,
+    importStatus: String?,
+    onImportModel: (model: EmbeddingModelType, tflite: Uri, vocab: Uri) -> Unit,
+    onRemoveModel: (EmbeddingModelType) -> Unit,
+    onImportProblem: (String) -> Unit,
     isReindexing: Boolean,
     reindexingProgress: Float,
     reindexingStatus: String,
@@ -87,66 +96,24 @@ fun EmbeddingModelSheet(
     var testResultSimB by remember { mutableStateOf<Float?>(null) }
     var testLatency by remember { mutableStateOf<Long?>(null) }
     var isTestingBenchmark by remember { mutableStateOf(false) }
-    var pendingCloudModel by remember { mutableStateOf<EmbeddingModelType?>(null) }
 
-    if (pendingCloudModel != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { pendingCloudModel = null },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = Color(0xFFF59E0B),
-                    modifier = Modifier.size(28.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "Cloud Privacy Warning",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "You are about to switch to a Cloud AI Model (${pendingCloudModel?.shortName}).",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "⚠️ This will transmit your document text chunks and search queries to Google's Cloud API for embedding generation. Your data will no longer be stored exclusively on-device.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val m = pendingCloudModel
-                        pendingCloudModel = null
-                        if (m != null) {
-                            onSelectModel(m)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                ) {
-                    Text("Proceed to Cloud")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { pendingCloudModel = null }
-                ) {
-                    Text("Stay 100% Offline")
-                }
+    // "Import model files": the user picks model.tflite and vocab.txt together.
+    val context = LocalContext.current
+    var importTarget by remember { mutableStateOf<EmbeddingModelType?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val target = importTarget
+        importTarget = null
+        if (target != null && uris.isNotEmpty()) {
+            val named = uris.map { it to (DocumentFile.fromSingleUri(context, it)?.name.orEmpty().lowercase()) }
+            val tflite = named.firstOrNull { it.second.endsWith(".tflite") }?.first
+            val vocab = named.firstOrNull { it.second == "vocab.txt" }?.first
+                ?: named.firstOrNull { it.second.endsWith(".txt") }?.first
+            if (tflite != null && vocab != null) {
+                onImportModel(target, tflite, vocab)
+            } else {
+                onImportProblem("Select both files together: model.tflite and vocab.txt.")
             }
-        )
+        }
     }
 
     ModalBottomSheet(
@@ -202,40 +169,64 @@ fun EmbeddingModelSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // API Key Status Banner
+            // Privacy banner: every model runs on the phone
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (isGeminiConfigured) Color(0xFF10B981).copy(alpha = 0.12f) else Color(0xFFF59E0B).copy(alpha = 0.12f),
+                color = Color(0xFF10B981).copy(alpha = 0.12f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = if (isGeminiConfigured) Icons.Default.CheckCircle else Icons.Default.Key,
-                            contentDescription = null,
-                            tint = if (isGeminiConfigured) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            modifier = Modifier.size(20.dp)
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "100% On-Device & Private",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = if (isGeminiConfigured) "Gemini AI Key Active" else "Gemini Key Unconfigured (Secrets Panel)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isGeminiConfigured) Color(0xFF10B981) else Color(0xFFF59E0B)
-                            )
-                            Text(
-                                text = if (isGeminiConfigured) "Cloud SOTA embeddings enabled" else "Set GEMINI_API_KEY in AI Studio Secrets to unlock SOTA Cloud AI",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "Your documents and searches never leave this phone. Models are files on your device; the app never downloads or uploads anything for them.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
+            }
+
+            if (activeModel != effectiveModel) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "${activeModel.shortName} isn't installed yet, so the ${effectiveModel.shortName} embedder is being used. Import its model files below to switch.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFB45309),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    )
+                }
+            }
+
+            if (!importStatus.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = importStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("model_import_status")
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -252,7 +243,6 @@ fun EmbeddingModelSheet(
             // Model Selection Cards
             EmbeddingModelType.entries.forEach { model ->
                 val isSelected = activeModel == model
-                val isDisabled = model.requiresApiKey && !isGeminiConfigured
 
                 Surface(
                     modifier = Modifier
@@ -264,13 +254,7 @@ fun EmbeddingModelSheet(
                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
                             shape = RoundedCornerShape(16.dp)
                         )
-                        .clickable {
-                            if (model.isCloud) {
-                                pendingCloudModel = model
-                            } else {
-                                onSelectModel(model)
-                            }
-                        }
+                        .clickable { onSelectModel(model) }
                         .testTag("model_card_${model.id}"),
                     color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                 ) {
@@ -284,7 +268,7 @@ fun EmbeddingModelSheet(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = if (model.isCloud) Icons.Default.Cloud else Icons.Default.Memory,
+                                    imageVector = Icons.Default.Memory,
                                     contentDescription = null,
                                     tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
@@ -372,14 +356,42 @@ fun EmbeddingModelSheet(
                             }
                         }
 
-                        if (isDisabled) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "⚠️ Requires Gemini API Key in Secrets panel (will fallback to on-device)",
-                                fontSize = 11.sp,
-                                color = Color(0xFFF59E0B),
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        if (!model.isBuiltIn) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val installed = model in installedModels
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (installed) "✓ Installed" else "Model files not installed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (installed) Color(0xFF10B981) else Color(0xFFF59E0B)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (installed) {
+                                        TextButton(onClick = { onRemoveModel(model) }) { Text("Remove") }
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            importTarget = model
+                                            importLauncher.launch(arrayOf("*/*"))
+                                        },
+                                        modifier = Modifier.testTag("btn_import_${model.id}")
+                                    ) {
+                                        Text(if (installed) "Replace files" else "Import model files")
+                                    }
+                                }
+                            }
+                            if (!installed) {
+                                Text(
+                                    text = "Pick model.tflite and vocab.txt together. Create them with tools/export_embedding_model.py (${model.sourceCheckpoint}, ${model.licence}).",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -403,10 +415,20 @@ fun EmbeddingModelSheet(
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Text(
-                        text = "Re-computes vector embeddings for all currently indexed documents using ${activeModel.shortName} to apply improved search accuracy instantly.",
+                        text = "Re-computes vector embeddings for all currently indexed documents using ${effectiveModel.shortName}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (staleChunkCount > 0) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "$staleChunkCount indexed sections were embedded with a different model. They still match keywords, but are skipped by semantic search until you re-index.",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFB45309),
+                            modifier = Modifier.testTag("stale_chunks_notice")
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -444,7 +466,7 @@ fun EmbeddingModelSheet(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Re-index Knowledge Base with ${activeModel.shortName}")
+                            Text("Re-index Knowledge Base with ${effectiveModel.shortName}")
                         }
                     }
                 }

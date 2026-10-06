@@ -34,7 +34,11 @@ data class ParsedDocument(
 data class ParsedChunk(
     val index: Int,
     val text: String,
-    val hash: String
+    val hash: String,
+    /** First source page (PDFs only, 1-based); null for formats without pages. */
+    val page: Int? = null,
+    /** Last source page when the chunk spans a page break. */
+    val pageEnd: Int? = null
 )
 
 sealed interface ParseResult {
@@ -87,6 +91,8 @@ class DocumentParser(
 
     private val imageMetadataExtractor = ImageMetadataExtractor(context)
     val chatParser = ChatParser()
+
+    private val textExtraction by lazy { com.example.engine.extraction.TextExtractionService(context) }
 
     /**
      * User preference: chat backups and messaging exports are included by default
@@ -525,10 +531,19 @@ class DocumentParser(
         }
 
         val fullText: String
+        var pdfPages: List<com.example.engine.extraction.ExtractedPage>? = null
         try {
             fullText = when {
                 ext in ImageMetadataExtractor.IMAGE_EXTENSIONS -> imageMetadataExtractor.extractMetadata(uri, name).semanticDescription
-                ext == "pdf" -> extractTextFromPdf(uri)
+                ext == "pdf" -> {
+                    val extracted = textExtraction.extractPdf(uri)
+                    if (extracted.isEmpty) {
+                        pdfTitleFallback(uri)
+                    } else {
+                        pdfPages = extracted.pages
+                        extracted.fullText
+                    }
+                }
                 ext == "docx" -> extractTextFromDocx(uri)
                 ext == "pptx" -> extractTextFromPptx(uri)
                 ext == "html" || ext == "htm" -> extractTextFromHtml(uri)
@@ -551,7 +566,12 @@ class DocumentParser(
             )
         }
 
-        val chunks = recursiveTextChunk(fullText, uri.toString())
+        val pages = pdfPages
+        val chunks = if (pages != null) {
+            chunkPages(pages, uri.toString())
+        } else {
+            recursiveTextChunk(fullText, uri.toString())
+        }
         ParseResult.Success(
             ParsedDocument(
                 fileUri = uri.toString(),
@@ -728,40 +748,33 @@ class DocumentParser(
     }
 
     /**
-     * Extracts plain text from PDF using the dedicated PdfParserUtils engine library.
+     * Last resort for a PDF with no extractable text (e.g. scanned images): index the file name so the
+     * document is still findable by title.
      */
-    private fun extractTextFromPdf(uri: Uri): String {
-        Log.i(TAG, "PDF Parser: Initializing extraction pipeline for PDF document Uri: $uri")
-        val extracted = try {
-            openStreamSafe(uri).use { stream ->
-                val rawText = com.example.engine.pdf.PdfParserUtils.extractRawText(stream)
-                Log.d(TAG, "PDF Parser: Successfully retrieved ${rawText.length} raw characters from stream for $uri")
-                rawText
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "PDF Parser stream notice: failed streaming for $uri: ${e.message}", e)
-            ""
-        }
-
-        val cleaned = com.example.engine.pdf.PdfParserUtils.cleanPdfTextForEmbedding(extracted)
-        if (cleaned.isNotBlank() && cleaned.length > 10) {
-            Log.i(TAG, "PDF Parser: Extraction successful using high-performance stream extractor (${cleaned.length} cleaned characters).")
-            return cleaned
-        }
-
-        // Deep fallback using Context and PdfRenderer for scanned/image PDFs or complex stream layouts
-        Log.i(TAG, "PDF Parser: Primary stream returned empty/minimal text. Initiating deep PdfRenderer fallback analyzer for scanned or complex formats: $uri")
-        val rendererDoc = com.example.engine.pdf.PdfTextExtractor.extractDocument(context, uri)
-        if (rendererDoc.fullText.isNotBlank()) {
-            val fallbackCleaned = com.example.engine.pdf.PdfParserUtils.cleanPdfTextForEmbedding(rendererDoc.fullText)
-            Log.i(TAG, "PDF Parser fallback: Deep rendering successfully recovered ${fallbackCleaned.length} characters.")
-            return fallbackCleaned
-        }
-
-        val fallbackTitle = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
+    private fun pdfTitleFallback(uri: Uri): String {
+        val title = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
             ?.replace('_', ' ')?.replace('-', ' ')
-        Log.w(TAG, "PDF Parser: Document contains no extractable text content. Falling back to metadata title extraction: '$fallbackTitle'")
-        return fallbackTitle ?: ""
+        Log.w(TAG, "PDF Parser: no extractable text in $uri; indexing title only: '$title'")
+        return title ?: ""
+    }
+
+    /**
+     * Chunks PDF pages so each chunk records the page(s) it came from; short pages are merged together
+     * and long pages are split on paragraph/sentence boundaries.
+     */
+    fun chunkPages(pages: List<com.example.engine.extraction.ExtractedPage>, fileUri: String): List<ParsedChunk> {
+        val pageChunks = com.example.engine.extraction.PageAwareChunker.chunk(pages, targetChunkCharacters) { pageText ->
+            recursiveTextChunk(pageText, fileUri).map { it.text }
+        }
+        return pageChunks.mapIndexed { index, c ->
+            ParsedChunk(
+                index = index,
+                text = c.text,
+                hash = computeSha256("$fileUri:$index:${c.text}"),
+                page = c.page,
+                pageEnd = c.pageEnd.takeIf { it > c.page }
+            )
+        }
     }
 
     /**

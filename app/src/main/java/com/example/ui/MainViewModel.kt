@@ -312,7 +312,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Model Management State
     val activeEmbeddingModel: StateFlow<com.example.engine.model.EmbeddingModelType> = repository.modelManager.activeModel
-    val isGeminiConfigured: StateFlow<Boolean> = MutableStateFlow(repository.modelManager.isGeminiConfigured()).asStateFlow()
+
+    /** The model really in use: the active one, or the built-in embedder when its files aren't installed. */
+    val effectiveEmbeddingModel: StateFlow<com.example.engine.model.EmbeddingModelType> = repository.modelManager.effectiveModel
+
+    val installedEmbeddingModels: StateFlow<Set<com.example.engine.model.EmbeddingModelType>> = repository.modelManager.installedModels
+
+    /** Chunks indexed with a different model than the one in use; they need a re-index for semantic search. */
+    val staleChunkCount: StateFlow<Int> = repository.staleChunkCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    private val _modelImportStatus = MutableStateFlow<String?>(null)
+    val modelImportStatus: StateFlow<String?> = _modelImportStatus.asStateFlow()
+
+    fun importEmbeddingModel(model: com.example.engine.model.EmbeddingModelType, tflite: Uri, vocab: Uri) {
+        _modelImportStatus.value = "Importing ${model.shortName}…"
+        viewModelScope.launch {
+            val error = repository.importEmbeddingModel(model, tflite, vocab)
+            _modelImportStatus.value = error ?: "${model.shortName} installed. Re-index to use it for your existing documents."
+        }
+    }
+
+    fun removeEmbeddingModel(model: com.example.engine.model.EmbeddingModelType) {
+        viewModelScope.launch {
+            repository.removeEmbeddingModel(model)
+            _modelImportStatus.value = "${model.shortName} removed."
+        }
+    }
+
+    fun reportModelImportProblem(message: String) {
+        _modelImportStatus.value = message
+    }
 
     private val _isReindexingModel = MutableStateFlow(false)
     val isReindexingModel: StateFlow<Boolean> = _isReindexingModel.asStateFlow()
@@ -342,17 +372,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_isReindexingModel.value) return
         _isReindexingModel.value = true
         _reindexingModelProgress.value = 0.05f
-        _reindexingModelStatus.value = "Starting re-indexing with ${activeEmbeddingModel.value.shortName}…"
+        _reindexingModelStatus.value = "Starting re-indexing with ${effectiveEmbeddingModel.value.shortName}…"
 
         reindexJob = viewModelScope.launch {
             try {
                 val updatedCount = repository.reindexAllDocumentsWithActiveModel { cur, total, file ->
                     val pct = if (total > 0) cur.toFloat() / total.toFloat() else 0.5f
                     _reindexingModelProgress.value = pct
-                    _reindexingModelStatus.value = "Re-embedding $file ($cur/$total) with ${activeEmbeddingModel.value.shortName}…"
+                    _reindexingModelStatus.value = "Re-embedding $file ($cur/$total) with ${effectiveEmbeddingModel.value.shortName}…"
                 }
                 _reindexingModelProgress.value = 1.0f
-                _reindexingModelStatus.value = "Successfully re-indexed $updatedCount chunks using ${activeEmbeddingModel.value.shortName}!"
+                _reindexingModelStatus.value = "Successfully re-indexed $updatedCount chunks using ${effectiveEmbeddingModel.value.shortName}!"
                 delay(1200)
                 performSearch(_query.value, _searchMode.value, _selectedTag.value)
                 onComplete?.invoke(updatedCount)
@@ -395,6 +425,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val hardwareMetrics: StateFlow<com.example.engine.HardwareMetrics> = com.example.engine.HardwareMonitor.metrics
     val isGamingModePaused: StateFlow<Boolean> = com.example.engine.HardwareMonitor.isIndexingPaused
     val indexingSpeed: StateFlow<com.example.engine.IndexingPowerPolicy.Speed> = com.example.engine.IndexingPowerPolicy.speed
+    val fullSpeedEnabled: StateFlow<Boolean> = com.example.engine.IndexingPowerPolicy.forceFullSpeed
+
+    /** Manual "Full speed" for big first-time indexing runs; remembered until switched off. */
+    fun setFullSpeed(enabled: Boolean) {
+        com.example.engine.IndexingPowerPolicy.setForceFullSpeed(getApplication(), enabled)
+    }
     val chatIndexingProgress: StateFlow<com.example.service.ChatIndexingProgress> = com.example.service.ChatBackupIndexingService.serviceProgress
 
     private val _selectedTag = MutableStateFlow<String?>(null)

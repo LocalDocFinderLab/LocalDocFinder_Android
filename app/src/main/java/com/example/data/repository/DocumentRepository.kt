@@ -17,6 +17,7 @@ import com.example.engine.SearchMode
 import com.example.engine.SearchResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -44,7 +45,9 @@ data class DocumentPreviewContent(
 /** One chunk of an indexed document with the overlap shared with the previous chunk trimmed away. */
 data class DocumentDetailChunk(
     val chunkIndex: Int,
-    val text: String
+    val text: String,
+    /** Source page label for PDFs ("p. 3" / "pp. 3–4"); null for formats without pages. */
+    val pageLabel: String? = null
 )
 
 /**
@@ -70,12 +73,21 @@ class DocumentRepository(
     private val database = AppDatabase.getInstance(context)
     private val dao = database.documentChunkDao()
     private val searchHistoryDao = database.searchHistoryDao()
-    val embeddingEngine = OnDeviceEmbeddingEngine(context)
-    val modelManager = com.example.engine.model.UnifiedEmbeddingManager(context, embeddingEngine)
+    /** Shared across the whole app so every indexer and the UI use the same loaded models. */
+    val modelManager = com.example.engine.model.UnifiedEmbeddingManager.getInstance(context)
+    val embeddingEngine = modelManager.onDeviceEngine
     val documentParser = DocumentParser(context)
     val documentPreparationService = com.example.service.DocumentPreparationService.getInstance(context)
     val hybridSearchEngine = HybridSearchEngine(dao, embeddingEngine, modelManager)
     val pixelOptimizer = embeddingEngine.pixelOptimizer
+
+    /**
+     * Chunks whose vector was not produced by the model search currently uses. They stay keyword-searchable
+     * but are skipped by semantic scoring until re-indexed (see [reindexAllDocumentsWithActiveModel]).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val staleChunkCount: Flow<Int> = modelManager.effectiveModel
+        .flatMapLatest { model -> dao.countChunksNotIndexedWith(model.id) }
 
     val totalChunksCount: Flow<Int> = dao.getTotalChunksCount()
     val totalFilesCount: Flow<Int> = dao.getTotalFilesCount()
@@ -140,6 +152,16 @@ class DocumentRepository(
         dao.setTagsForFile(fileUri, updated)
     }
 
+    /** Installs user-picked `model.tflite` + `vocab.txt` files for [model]. Returns null or an error message. */
+    suspend fun importEmbeddingModel(
+        model: com.example.engine.model.EmbeddingModelType,
+        tflite: Uri,
+        vocab: Uri
+    ): String? = withContext(Dispatchers.IO) { modelManager.importModel(model, tflite, vocab) }
+
+    suspend fun removeEmbeddingModel(model: com.example.engine.model.EmbeddingModelType) =
+        withContext(Dispatchers.IO) { modelManager.removeModel(model) }
+
     suspend fun ingestDocumentUri(
         uri: Uri,
         onProgress: ((step: String, current: Int, total: Int) -> Unit)? = null
@@ -168,10 +190,15 @@ class DocumentRepository(
      */
     suspend fun loadEmbeddingBlobs(chunkIds: List<Long>): Map<Long, ByteArray> = withContext(Dispatchers.IO) {
         if (chunkIds.isEmpty()) return@withContext emptyMap()
+        // Vectors from other models are not comparable with the query vector, so they are left out and
+        // those candidates simply keep their keyword (BM25) ranking.
+        val modelId = modelManager.effectiveModelId()
         val blobs = HashMap<Long, ByteArray>(chunkIds.size)
         for (batch in chunkIds.distinct().chunked(500)) {
             for (row in dao.getEmbeddingsForChunkIds(batch)) {
-                blobs[row.id] = row.embeddingBlob
+                if (com.example.engine.extraction.ChunkMetadata.model(row.metadata) == modelId) {
+                    blobs[row.id] = row.embeddingBlob
+                }
             }
         }
         blobs
@@ -257,7 +284,8 @@ class DocumentRepository(
                     end,
                     chunksToEmbed.size
                 )
-                val embeddings = modelManager.embedBatch(texts, isQuery = false, batchSize = batchSize)
+                val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = batchSize)
+                val embeddings = tagged.vectors
 
                 for (i in batchChunks.indices) {
                     val c = batchChunks[i]
@@ -272,7 +300,8 @@ class DocumentRepository(
                             chunkText = c.text,
                             hash = c.hash,
                             timestamp = fileTimestamp,
-                            embeddingBlob = blob
+                            embeddingBlob = blob,
+                            metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
                         )
                     )
                 }
@@ -305,7 +334,13 @@ class DocumentRepository(
     suspend fun loadDocumentDetail(fileUriStr: String, fileName: String): DocumentDetail = withContext(Dispatchers.IO) {
         val dbChunks = dao.getChunksForFile(fileUriStr)
         val stitchedTexts = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
-        val chunks = dbChunks.mapIndexed { i, c -> DocumentDetailChunk(c.chunkIndex, stitchedTexts[i]) }
+        val chunks = dbChunks.mapIndexed { i, c ->
+            DocumentDetailChunk(
+                chunkIndex = c.chunkIndex,
+                text = stitchedTexts[i],
+                pageLabel = com.example.engine.extraction.ChunkMetadata.pageLabel(c.metadata)
+            )
+        }
         val fullText = chunks.joinToString(" ") { it.text }
 
         val uri = Uri.parse(fileUriStr)
@@ -799,12 +834,17 @@ class DocumentRepository(
             onProgress(idx + 1, groupedByFile.size, fileName)
 
             val texts = chunks.map { it.chunkText }
-            val newEmbeddings = modelManager.embedBatch(texts, isQuery = false, batchSize = 8)
+            val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = 8)
+            // If embedding returned fewer vectors than chunks the file is skipped, so a chunk never keeps an
+            // old vector under a new model tag.
+            if (tagged.vectors.size != chunks.size) return@forEachIndexed
 
             val updatedEntities = chunks.mapIndexed { i, oldChunk ->
-                val newEmb = if (i < newEmbeddings.size) newEmbeddings[i] else oldChunk.embedding
-                val newBlob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(newEmb)
-                oldChunk.copy(embeddingBlob = newBlob)
+                val newBlob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(tagged.vectors[i])
+                oldChunk.copy(
+                    embeddingBlob = newBlob,
+                    metadata = com.example.engine.extraction.ChunkMetadata.withModel(oldChunk.metadata, tagged.modelId)
+                )
             }
 
             dao.deleteFileRecord(uri)

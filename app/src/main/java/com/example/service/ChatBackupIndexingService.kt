@@ -22,6 +22,7 @@ import com.example.data.local.DocumentChunkEntity
 import com.example.engine.ChatParser
 import com.example.engine.HardwareMonitor
 import com.example.engine.OnDeviceEmbeddingEngine
+import com.example.engine.model.UnifiedEmbeddingManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -109,7 +110,7 @@ class ChatBackupIndexingService : Service() {
     private var indexingJob: Job? = null
 
     private lateinit var chatParser: ChatParser
-    private lateinit var embeddingEngine: OnDeviceEmbeddingEngine
+    private lateinit var modelManager: UnifiedEmbeddingManager
     private lateinit var database: AppDatabase
 
     inner class LocalBinder : Binder() {
@@ -120,7 +121,7 @@ class ChatBackupIndexingService : Service() {
         super.onCreate()
         createNotificationChannel()
         chatParser = ChatParser()
-        embeddingEngine = OnDeviceEmbeddingEngine(applicationContext)
+        modelManager = UnifiedEmbeddingManager.getInstance(applicationContext)
         database = AppDatabase.getInstance(applicationContext)
         Log.i(TAG, "ChatBackupIndexingService created")
     }
@@ -248,12 +249,13 @@ class ChatBackupIndexingService : Service() {
                     updateNotification("Indexing Chat Backup: $fileName", stepMsg, pct)
 
                     val texts = batch.map { it.second }
-                    val embeddings = embeddingEngine.embedBatch(texts, batchSize = batchSize)
+                    val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = batchSize)
+                    val embeddings = tagged.vectors
 
                     for (i in batch.indices) {
                         val (idx, text) = batch[i]
                         val emb = embeddings[i]
-                        val blob = embeddingEngine.floatArrayToByteArray(emb)
+                        val blob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(emb)
 
                         finalEntities.add(
                             DocumentChunkEntity(
@@ -264,7 +266,8 @@ class ChatBackupIndexingService : Service() {
                                 hash = computeSha256("$fileUriStr:$idx:$text"),
                                 timestamp = System.currentTimeMillis(),
                                 embeddingBlob = blob,
-                                tags = "Chat, Messaging"
+                                tags = "Chat, Messaging",
+                                metadata = com.example.engine.extraction.ChunkMetadata.encode(modelId = tagged.modelId)
                             )
                         )
                     }
