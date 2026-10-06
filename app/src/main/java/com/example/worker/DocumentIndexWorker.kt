@@ -289,6 +289,14 @@ class DocumentIndexWorker(
 
                     val docFile = files[index]
                     val fileName = docFile.name ?: "Document"
+                    val fileUri = docFile.uri.toString()
+
+                    if (com.example.engine.FailedDocumentRegistry.isQuarantined(context, fileUri)) {
+                        failures.add("$fileName: Skipped (Quarantined)")
+                        completed.incrementAndGet()
+                        continue
+                    }
+
                     val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
                         val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
                         val done = completed.get()

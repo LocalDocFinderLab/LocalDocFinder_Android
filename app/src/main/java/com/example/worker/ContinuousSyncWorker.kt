@@ -82,7 +82,7 @@ class ContinuousSyncWorker(
                     if (isStopped) return@withContext Result.retry()
                     val docFile = androidx.documentfile.provider.DocumentFile.fromFile(file)
                     val uriStr = docFile.uri.toString()
-                    if (uriStr !in indexedFiles) {
+                    if (uriStr !in indexedFiles && !com.example.engine.FailedDocumentRegistry.isQuarantined(context, uriStr)) {
                         newlyIndexedChunks += repository.indexDocument(docFile)
                     }
                 }

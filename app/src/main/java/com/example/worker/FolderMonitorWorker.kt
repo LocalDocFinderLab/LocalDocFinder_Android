@@ -261,15 +261,19 @@ class FolderMonitorWorker(
             // 2. Last-indexed timestamp per file for change detection (a tiny GROUP BY query: no chunk text or embeddings are loaded)
             val indexedTimestampMap = dao.getIndexedFileStamps().associate { it.fileUri to (it.lastIndexed) }
 
-            // 3. Detect new files or files whose modification time is newer than saved timestamp
+            // 3. Detect new files or files whose modification time is newer than saved timestamp (skipping quarantined docs)
             val filesToProcess = candidateFiles.filter { docFile ->
                 val uriStr = docFile.uri.toString()
-                val lastIndexedTime = indexedTimestampMap[uriStr]
-                if (lastIndexedTime == null) {
-                    true // Brand new file
+                if (com.example.engine.FailedDocumentRegistry.isQuarantined(context, uriStr)) {
+                    false // Skip quarantined documents to avoid crash loops
                 } else {
-                    val fileModTime = docFile.lastModified()
-                    fileModTime > 0L && fileModTime > (lastIndexedTime + 1000L) // File content modified
+                    val lastIndexedTime = indexedTimestampMap[uriStr]
+                    if (lastIndexedTime == null) {
+                        true // Brand new file
+                    } else {
+                        val fileModTime = docFile.lastModified()
+                        fileModTime > 0L && fileModTime > (lastIndexedTime + 1000L) // File content modified
+                    }
                 }
             }
 
