@@ -63,7 +63,9 @@ fun IndexingStatusCard(
     autoScanEnabled: Boolean = true,
     onToggleAutoScan: ((Boolean) -> Unit)? = null,
     lastScanMessage: String? = null,
-    speed: com.example.engine.IndexingPowerPolicy.Speed? = null
+    speed: com.example.engine.IndexingPowerPolicy.Speed? = null,
+    fullSpeedEnabled: Boolean = false,
+    onToggleFullSpeed: ((Boolean) -> Unit)? = null
 ) {
     Card(
         modifier = modifier
@@ -328,6 +330,39 @@ fun IndexingStatusCard(
                         onCheckedChange = onToggleAutoScan,
                         enabled = !isStoppedByUser,
                         modifier = Modifier.testTag("switch_auto_scan")
+                    )
+                }
+            }
+
+            if (onToggleFullSpeed != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Full speed",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (fullSpeedEnabled) {
+                                "On: indexing uses all cores even on battery or while you use the phone. Turn off when the first big run is done."
+                            } else {
+                                "Best for the first indexing of lots of documents. Off by default to save battery."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("full_speed_description")
+                        )
+                    }
+                    Switch(
+                        checked = fullSpeedEnabled,
+                        onCheckedChange = onToggleFullSpeed,
+                        modifier = Modifier.testTag("switch_full_speed")
                     )
                 }
             }

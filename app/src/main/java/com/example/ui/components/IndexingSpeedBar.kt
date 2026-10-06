@@ -113,7 +113,7 @@ fun IndexingSpeedBar(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = "Turbo • ${speed.explanation()}",
+                text = "${if (speed.isFullSpeed) "Full speed" else "Turbo"} • ${speed.explanation()}",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Medium,
                 color = TurboGreen

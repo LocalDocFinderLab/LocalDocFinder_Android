@@ -87,4 +87,49 @@ class IndexingPowerPolicyTest {
         IndexingPowerPolicy.setUserPaused(false)
         assertFalse(IndexingPowerPolicy.current().mode == Mode.PAUSED)
     }
+
+    private fun slowestCase() = Inputs(isCharging = false, isUserActive = true, isPowerSave = true, cores = 8, forceFullSpeed = true)
+
+    @Test
+    fun manualFullSpeedBeatsBatteryUsageAndBatterySaver() {
+        val s = IndexingPowerPolicy.decide(slowestCase())
+        assertEquals(Mode.FULL_SPEED, s.mode)
+        assertEquals(Reason.USER_FORCED, s.reason)
+        assertEquals(100, s.speedPercent)
+        assertFalse(s.isSlowed)
+        assertTrue(s.isFullSpeed)
+        assertEquals(0L, s.interBatchDelayMs)
+        assertEquals(7, s.cpuThreads)
+        assertTrue(s.batchSize >= 16)
+        assertTrue(s.parallelFiles > 1)
+        assertEquals("Full speed", s.summary())
+    }
+
+    @Test
+    fun manualFullSpeedMatchesTurboThroughput() {
+        val turbo = IndexingPowerPolicy.decide(idleCharging())
+        val forced = IndexingPowerPolicy.decide(slowestCase())
+        assertEquals(turbo.batchSize, forced.batchSize)
+        assertEquals(turbo.cpuThreads, forced.cpuThreads)
+        assertEquals(turbo.parallelFiles, forced.parallelFiles)
+    }
+
+    @Test
+    fun manualFullSpeedIgnoresModerateWarmthButNotSevereHeatOrPause() {
+        val moderate = IndexingPowerPolicy.decide(slowestCase().copy(thermalStatus = 3))
+        assertEquals(Mode.FULL_SPEED, moderate.mode)
+
+        val severe = IndexingPowerPolicy.decide(slowestCase().copy(thermalStatus = 4))
+        assertEquals(Mode.THERMAL_GUARD, severe.mode)
+
+        val paused = IndexingPowerPolicy.decide(slowestCase().copy(isUserPaused = true))
+        assertEquals(Mode.PAUSED, paused.mode)
+    }
+
+    @Test
+    fun fullSpeedOffRestoresAdaptiveBehaviour() {
+        val s = IndexingPowerPolicy.decide(slowestCase().copy(forceFullSpeed = false))
+        assertEquals(Reason.POWER_SAVE, s.reason)
+        assertTrue(s.isSlowed)
+    }
 }

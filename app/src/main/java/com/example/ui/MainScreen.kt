@@ -177,6 +177,7 @@ fun MainScreen(
     val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
     val hardwareMetrics by viewModel.hardwareMetrics.collectAsStateWithLifecycle()
     val indexingSpeed by viewModel.indexingSpeed.collectAsStateWithLifecycle()
+    val fullSpeedEnabled by viewModel.fullSpeedEnabled.collectAsStateWithLifecycle()
     val isGamingModePaused by viewModel.isGamingModePaused.collectAsStateWithLifecycle()
     val includeChatBackups by viewModel.includeChatBackups.collectAsStateWithLifecycle()
     val chatIndexingProgress by viewModel.chatIndexingProgress.collectAsStateWithLifecycle()
@@ -796,7 +797,9 @@ fun MainScreen(
                                 }
                             },
                             modifier = Modifier.padding(vertical = 4.dp),
-                            speed = indexingSpeed
+                            speed = indexingSpeed,
+                            fullSpeedEnabled = fullSpeedEnabled,
+                            onToggleFullSpeed = { viewModel.setFullSpeed(it) }
                         )
 
                         // In-App Software Update Announcement Banner
