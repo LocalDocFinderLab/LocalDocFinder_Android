@@ -127,7 +127,7 @@ import com.example.ui.components.AppUpdateBanner
 import com.example.ui.components.AppUpdateSheet
 import com.example.ui.components.ChatBackupSheet
 import com.example.ui.components.DocumentDetailSheet
-import com.example.ui.components.FileObserverStatusIndicator
+import com.example.ui.components.BackgroundScanBanner
 import com.example.ui.components.FtsDocumentSearchComponent
 import com.example.ui.components.HardwareDashboardSheet
 import com.example.ui.components.IndexingStatusCard
@@ -780,6 +780,9 @@ fun MainScreen(
                             },
                             isIndexingActive = isIndexingActive,
                             isStoppedByUser = isIndexingStoppedByUser,
+                            autoScanEnabled = fileObserverStatus.isMonitoringActive,
+                            onToggleAutoScan = { viewModel.setAutoScanEnabled(it) },
+                            lastScanMessage = fileObserverStatus.lastScanMessage,
                             onStartIndexingClick = {
                                 // Clear the "stopped" flag first so a permission prompt that is granted later still crawls
                                 viewModel.allowIndexing()
@@ -907,11 +910,13 @@ fun MainScreen(
                     }
                 }
 
-                // Floating FileObserver & WorkManager Task Status Indicator
-                FileObserverStatusIndicator(
+                // Background scan banner: only visible while a scan is indexing files, then it goes away
+                BackgroundScanBanner(
                     status = fileObserverStatus,
-                    onTriggerScan = { viewModel.triggerImmediateFileObserverScan() },
-                    onToggleMonitoring = { viewModel.toggleFileObserverMonitoring() },
+                    onStop = {
+                        viewModel.stopIndexing()
+                        Toast.makeText(context, "Indexing stopped", Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }

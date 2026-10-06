@@ -187,6 +187,23 @@ class DocumentRepository(
         val fileName = docFile.name ?: "Unknown"
         val fileUri = docFile.uri.toString()
 
+        // Unchanged since it was last indexed: skip the expensive parse + embedding entirely.
+        // Chunks store the source file's modified time, so equal-or-older means nothing changed.
+        val sourceModified = docFile.lastModified()
+        if (sourceModified > 0L) {
+            val stamp = dao.getFileIndexStamp(fileUri)
+            val lastIndexed = stamp.lastIndexed
+            if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed) {
+                onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
+                return@withContext IndexDocResult(
+                    fileName = fileName,
+                    fileUri = fileUri,
+                    isSuccess = true,
+                    chunksIndexed = stamp.chunkCount
+                )
+            }
+        }
+
         onSubProgress?.invoke("Parsing $fileName…", 0, 100)
         val parseResult = documentParser.parseDocumentSafely(docFile)
         if (parseResult is ParseResult.Failure) {
@@ -205,11 +222,13 @@ class DocumentRepository(
 
         val chunksToEmbed = mutableListOf<com.example.engine.ParsedChunk>()
         val finalEntities = mutableListOf<DocumentChunkEntity>()
+        val fileTimestamp = if (sourceModified > 0) sourceModified else System.currentTimeMillis()
 
         for (chunk in parsed.chunks) {
             val existing = existingHashMap[chunk.hash]
             if (existing != null) {
-                finalEntities.add(existing)
+                // Reused chunk: refresh its timestamp, otherwise a touched-but-unchanged file looks modified forever.
+                finalEntities.add(existing.copy(timestamp = fileTimestamp))
             } else {
                 chunksToEmbed.add(chunk)
             }
@@ -252,7 +271,7 @@ class DocumentRepository(
                             chunkIndex = c.index,
                             chunkText = c.text,
                             hash = c.hash,
-                            timestamp = if (docFile.lastModified() > 0) docFile.lastModified() else System.currentTimeMillis(),
+                            timestamp = fileTimestamp,
                             embeddingBlob = blob
                         )
                     )

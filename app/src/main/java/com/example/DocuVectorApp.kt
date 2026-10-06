@@ -24,8 +24,12 @@ class DocuVectorApp : Application(), Configuration.Provider {
             if (!com.example.worker.IndexingController.isStoppedByUser(this)) {
                 com.example.worker.ContinuousSyncWorker.scheduleContinuousSync(this)
                 com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(this)
-                com.example.worker.DownloadsFileObserverWorker.scheduleDownloadsObserver(this)
             }
+            // The Downloads and PDF-sync workers used to run every 15 minutes next to the folder scan,
+            // re-scanning the same folders. The folder scan covers them, so retire the old schedules.
+            val workManager = androidx.work.WorkManager.getInstance(this)
+            workManager.cancelUniqueWork(com.example.worker.DownloadsFileObserverWorker.WORK_NAME)
+            workManager.cancelUniqueWork(com.example.worker.PdfSyncWorker.WORK_NAME)
             com.example.updater.worker.AppUpdateCheckWorker.schedulePeriodicCheck(this)
         } catch (e: Throwable) {
             Log.w("DocuVectorApp", "Worker scheduling deferred: ${e.message}")

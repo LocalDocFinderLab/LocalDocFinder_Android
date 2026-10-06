@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -68,13 +69,13 @@ sealed interface IndexingState {
 data class FileObserverProgressState(
     val isRunning: Boolean = false,
     val isMonitoringActive: Boolean = true,
-    val activeTaskName: String = "Downloads & Folder Observer",
+    val activeTaskName: String = "Background scan",
     val currentFile: String? = null,
-    val currentPhase: String = "Monitoring device Downloads & storage",
+    val currentPhase: String = "Checking Downloads & folders for new files",
     val processedCount: Int = 0,
     val totalCount: Int = 0,
     val percent: Int = 0,
-    val lastScanMessage: String = "FileObserver active. Downloads folder up-to-date.",
+    val lastScanMessage: String = "Auto-scan checks for new files every 15 minutes.",
     val lastScanTimeMillis: Long = 0L,
     val newlyIndexedFiles: Int = 0,
     val newlyIndexedChunks: Int = 0
@@ -480,6 +481,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var searchJob: Job? = null
+    private var fullCrawlRequested = false
+    private var downloadsCrawlRequested = false
 
     init {
         com.example.engine.HardwareMonitor.startMonitoring(application, viewModelScope)
@@ -509,19 +512,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (IndexingController.isStoppedByUser(application)) return@launch
             val directUris = repository.getIndexedFileUrisDirect()
             if (directUris.isEmpty()) {
-                // First launch: Automatically trigger indexing of user's Downloads & device PDFs
-                indexDownloadsDirectory()
-                if (hasAllFilesAccess()) {
-                    indexEntireSystemStorage()
-                }
+                // First launch: index the user's Downloads (or the whole storage when permitted)
+                autoCrawlOnPermissionGranted()
             } else {
-                // Trigger auto-scan of Downloads, WhatsApp, and storage folders for newly downloaded/changed files
+                // Later launches: one quiet check for new or changed files. It never shows a progress card;
+                // the periodic scan (every 15 min) is already scheduled by DocuVectorApp.
                 delay(500)
-                com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(application)
-                triggerFolderMonitorScan()
+                com.example.worker.FolderMonitorWorker.triggerImmediateScan(application)
+                // The whole-storage crawl runs once, as soon as "All files access" is granted.
+                autoCrawlOnPermissionGranted()
             }
-            com.example.worker.DownloadsFileObserverWorker.scheduleDownloadsObserver(application)
-            com.example.worker.PdfSyncWorker.schedulePdfSync(application)
         }
 
         // Keep document list refreshed when total files count changes and query is empty
@@ -565,9 +565,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isRunning = true,
                         isMonitoringActive = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication()),
                         activeTaskName = when {
-                            isDownloads -> "Downloads FileObserver"
-                            isPdfSync -> "PDF Sync Worker"
-                            else -> "Folder Monitor Task"
+                            isDownloads -> "Downloads scan"
+                            isPdfSync -> "PDF sync"
+                            else -> "Folder scan"
                         },
                         currentFile = curFile,
                         currentPhase = phase,
@@ -601,9 +601,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     FileObserverProgressState(
                         isRunning = false,
                         isMonitoringActive = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication()),
-                        activeTaskName = "Downloads & Folder FileObserver",
+                        activeTaskName = "Background scan",
                         currentFile = null,
-                        currentPhase = "Background monitoring active",
+                        currentPhase = "Idle",
                         processedCount = 0,
                         totalCount = 0,
                         percent = 0,
@@ -619,19 +619,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun triggerImmediateFileObserverScan() {
-        IndexingController.resume(getApplication())
-        com.example.worker.DownloadsFileObserverWorker.triggerImmediateScan(getApplication())
-        com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
-        com.example.worker.PdfSyncWorker.triggerImmediateSync(getApplication())
-    }
-
-    fun toggleFileObserverMonitoring() {
-        val current = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication())
-        com.example.worker.FolderMonitorWorker.setMonitoringEnabled(getApplication(), !current)
-        _fileObserverStatus.value = _fileObserverStatus.value.copy(
-            isMonitoringActive = !current
-        )
+    /** Turns the periodic background scan for new or changed files on or off. */
+    fun setAutoScanEnabled(enabled: Boolean) {
+        com.example.worker.FolderMonitorWorker.setMonitoringEnabled(getApplication(), enabled)
+        _fileObserverStatus.value = _fileObserverStatus.value.copy(isMonitoringActive = enabled)
     }
 
     fun toggleMultiSelectMode(enable: Boolean? = null) {
@@ -701,23 +692,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPhase = "Scanning folder for newly detected files…"
             )
             val workId = com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
-            workManager.getWorkInfoByIdFlow(workId).collect { workInfo ->
-                if (workInfo == null) return@collect
-                if (workInfo.state.isFinished) {
-                    val newFiles = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_FILES_INDEXED, 0)
-                    val newChunks = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_CHUNKS_INDEXED, 0)
-                    val msg = workInfo.outputData.getString(com.example.worker.FolderMonitorWorker.KEY_SCAN_MESSAGE)
-                        ?: "Monitored folder check complete."
-                    _folderMonitorStatus.value = msg
-                    _indexingState.value = IndexingState.Completed(
-                        chunksCount = newChunks,
-                        message = msg,
-                        failedCount = 0
-                    )
-                    loadAllIndexedDocuments()
-                    onResult?.invoke(newFiles, newChunks, msg)
-                }
+            val workInfo = workManager.getWorkInfoByIdFlow(workId).first { it != null && it.state.isFinished }
+                ?: return@launch
+            if (workInfo.state == WorkInfo.State.CANCELLED) {
+                // Stopped by the user (or replaced by a newer scan): nothing to report.
+                if (_indexingState.value is IndexingState.Progress) _indexingState.value = IndexingState.Idle
+                return@launch
             }
+            val newFiles = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_FILES_INDEXED, 0)
+            val newChunks = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_CHUNKS_INDEXED, 0)
+            val msg = workInfo.outputData.getString(com.example.worker.FolderMonitorWorker.KEY_SCAN_MESSAGE)
+                ?: "Monitored folder check complete."
+            _folderMonitorStatus.value = msg
+            _indexingState.value = IndexingState.Completed(
+                chunksCount = newChunks,
+                message = msg,
+                failedCount = 0
+            )
+            loadAllIndexedDocuments()
+            onResult?.invoke(newFiles, newChunks, msg)
         }
     }
 
@@ -971,13 +964,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Automatic initial crawl, safe to call on every app resume: each crawl type runs at most once.
+     * The whole-storage crawl is remembered across launches (see [IndexingController.isFullStorageCrawlDone]),
+     * so reopening the app never restarts a device-wide scan; later changes are picked up by the cheap periodic scan.
+     */
     fun autoCrawlOnPermissionGranted() {
-        if (IndexingController.isStoppedByUser(getApplication())) return
-        viewModelScope.launch {
+        val app = getApplication<Application>()
+        if (IndexingController.isStoppedByUser(app)) return
+        if (hasAllFilesAccess()) {
+            if (fullCrawlRequested || IndexingController.isFullStorageCrawlDone(app)) return
+            fullCrawlRequested = true
+            indexEntireSystemStorage()
+        } else if (!downloadsCrawlRequested) {
+            downloadsCrawlRequested = true
             indexDownloadsDirectory()
-            if (hasAllFilesAccess()) {
-                indexEntireSystemStorage()
-            }
         }
     }
 

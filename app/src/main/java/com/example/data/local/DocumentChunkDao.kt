@@ -16,6 +16,18 @@ data class ChunkEmbeddingRow(
     val embeddingBlob: ByteArray
 )
 
+/** When a file was last indexed (its stored source timestamp) and how many chunks it currently has. */
+data class FileIndexStamp(
+    val lastIndexed: Long?,
+    val chunkCount: Int
+)
+
+/** Per-file last-indexed timestamp, used by background scans to find new or modified files cheaply. */
+data class IndexedFileStamp(
+    val fileUri: String,
+    val lastIndexed: Long
+)
+
 @Dao
 interface DocumentChunkDao {
 
@@ -107,6 +119,12 @@ interface DocumentChunkDao {
 
     @Query("SELECT id, embeddingBlob FROM documents WHERE id IN (:chunkIds)")
     suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>
+
+    @Query("SELECT MAX(timestamp) AS lastIndexed, COUNT(*) AS chunkCount FROM documents WHERE fileUri = :fileUri")
+    suspend fun getFileIndexStamp(fileUri: String): FileIndexStamp
+
+    @Query("SELECT fileUri, MAX(timestamp) AS lastIndexed FROM documents GROUP BY fileUri")
+    suspend fun getIndexedFileStamps(): List<IndexedFileStamp>
 
     @Query("SELECT * FROM documents")
     fun getAllChunksFlow(): Flow<List<DocumentChunkEntity>>

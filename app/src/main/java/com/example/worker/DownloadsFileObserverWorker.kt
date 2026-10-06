@@ -154,7 +154,7 @@ class DownloadsFileObserverWorker(
             val candidateFilesMap = parser.scanDownloadDirectory().associateBy { it.uri.toString() }
 
             val dao = com.example.data.local.AppDatabase.getInstance(context).documentChunkDao()
-            val indexedUris = dao.getAllChunks().map { it.fileUri }.toSet()
+            val indexedUris = dao.getIndexedFilesDirect().toSet()
 
             val unindexedCandidates = candidateFilesMap.filterKeys { !indexedUris.contains(it) }.values.toList()
             val totalCandidates = unindexedCandidates.size

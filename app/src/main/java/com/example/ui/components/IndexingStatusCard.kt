@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -57,7 +59,10 @@ fun IndexingStatusCard(
     modifier: Modifier = Modifier,
     isIndexingActive: Boolean = indexingState is IndexingState.Progress,
     isStoppedByUser: Boolean = false,
-    onStartIndexingClick: (() -> Unit)? = null
+    onStartIndexingClick: (() -> Unit)? = null,
+    autoScanEnabled: Boolean = true,
+    onToggleAutoScan: ((Boolean) -> Unit)? = null,
+    lastScanMessage: String? = null
 ) {
     Card(
         modifier = modifier
@@ -281,6 +286,42 @@ fun IndexingStatusCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            if (onToggleAutoScan != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Auto-scan for new files",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = when {
+                                isStoppedByUser -> "Off while indexing is stopped."
+                                autoScanEnabled -> "Checks Downloads & folders every 15 min. ${lastScanMessage.orEmpty()}".trim()
+                                else -> "Off. New files are only indexed when you start indexing."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("auto_scan_description")
+                        )
+                    }
+                    Switch(
+                        checked = autoScanEnabled && !isStoppedByUser,
+                        onCheckedChange = onToggleAutoScan,
+                        enabled = !isStoppedByUser,
+                        modifier = Modifier.testTag("switch_auto_scan")
+                    )
                 }
             }
         }

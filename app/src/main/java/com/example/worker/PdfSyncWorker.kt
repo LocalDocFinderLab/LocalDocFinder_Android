@@ -126,8 +126,7 @@ class PdfSyncWorker(
             Log.i(TAG, "Filtered ${pdfAndDocs.size} PDF & text document files for indexing consideration.")
 
             // 3. Fetch list of already indexed file URIs to avoid redundant embedding cycles
-            val allIndexedChunks = dao.getAllChunks()
-            val indexedUris = allIndexedChunks.map { it.fileUri }.toSet()
+            val indexedUris = dao.getIndexedFilesDirect().toSet()
             Log.i(TAG, "Room Database currently contains ${indexedUris.size} unique indexed document URIs.")
 
             // Identify un-indexed files

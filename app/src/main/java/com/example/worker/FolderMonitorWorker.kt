@@ -258,15 +258,8 @@ class FolderMonitorWorker(
 
             val candidateFiles = candidateFilesMap.values.toList()
 
-            // 2. Fetch existing indexed chunks and build timestamp map for change detection
-            val allIndexedChunks = dao.getAllChunks()
-            val indexedTimestampMap = HashMap<String, Long>()
-            for (chunk in allIndexedChunks) {
-                val currentTs = indexedTimestampMap[chunk.fileUri] ?: 0L
-                if (chunk.timestamp > currentTs) {
-                    indexedTimestampMap[chunk.fileUri] = chunk.timestamp
-                }
-            }
+            // 2. Last-indexed timestamp per file for change detection (a tiny GROUP BY query: no chunk text or embeddings are loaded)
+            val indexedTimestampMap = dao.getIndexedFileStamps().associate { it.fileUri to (it.lastIndexed) }
 
             // 3. Detect new files or files whose modification time is newer than saved timestamp
             val filesToProcess = candidateFiles.filter { docFile ->
