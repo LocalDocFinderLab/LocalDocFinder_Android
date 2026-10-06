@@ -29,6 +29,7 @@ import com.example.updater.model.UpdateCheckResult
 import com.example.updater.model.UpdateConfig
 import com.example.updater.repository.UpdatePreferences
 import com.example.worker.DocumentIndexWorker
+import com.example.worker.IndexingController
 import com.example.worker.PdfSyncWorker
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -67,13 +69,13 @@ sealed interface IndexingState {
 data class FileObserverProgressState(
     val isRunning: Boolean = false,
     val isMonitoringActive: Boolean = true,
-    val activeTaskName: String = "Downloads & Folder Observer",
+    val activeTaskName: String = "Background scan",
     val currentFile: String? = null,
-    val currentPhase: String = "Monitoring device Downloads & storage",
+    val currentPhase: String = "Checking Downloads & folders for new files",
     val processedCount: Int = 0,
     val totalCount: Int = 0,
     val percent: Int = 0,
-    val lastScanMessage: String = "FileObserver active. Downloads folder up-to-date.",
+    val lastScanMessage: String = "Auto-scan checks for new files every 15 minutes.",
     val lastScanTimeMillis: Long = 0L,
     val newlyIndexedFiles: Int = 0,
     val newlyIndexedChunks: Int = 0
@@ -134,13 +136,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val combined = when (mode) {
                 SearchMode.HYBRID -> (normVecW * vecScore + normBm25W * bm25Score).coerceIn(0f, 1f)
                 SearchMode.VECTOR -> vecScore
-                SearchMode.KEYWORD -> bm25Score
+                // FTS candidates that were semantically re-scored (cosine > 0) rank by meaning;
+                // unscored candidates (e.g. embedding unavailable) keep their BM25 order.
+                SearchMode.KEYWORD -> if (res.cosineSimilarity > 0f) vecScore else bm25Score
             }
 
             res.copy(
                 bm25Score = bm25Score,
                 combinedScore = combined
             )
+        }
+    }
+
+    /**
+     * Ranks SQLite FTS full-text candidates by semantic relevance.
+     *
+     * For every candidate chunk the cosine similarity between the query embedding and the chunk's stored
+     * TFLite INT8 quantized embedding BLOB is computed directly in the quantized domain
+     * (see [com.example.engine.VectorSimilarityUtils.cosineSimilarityWithEmbeddingBlob]), so no per-chunk
+     * float array is allocated. Results are returned best-first: highest cosine similarity, ties broken by BM25.
+     *
+     * @param ftsResults FTS/keyword candidates (already filtered by the SQLite full-text query)
+     * @param queryEmbedding embedding of the user's query from the active model
+     * @param embeddingBlobs chunkId -> stored embedding BLOB for the candidates
+     * @param fallbackQueryEmbedding query embedding from the on-device engine, used for chunks that were
+     * indexed with a model whose dimension differs from [queryEmbedding]
+     */
+    fun rankBySemanticRelevance(
+        ftsResults: List<SearchResult>,
+        queryEmbedding: FloatArray,
+        embeddingBlobs: Map<Long, ByteArray>,
+        fallbackQueryEmbedding: FloatArray? = null
+    ): List<SearchResult> {
+        if (ftsResults.isEmpty() || queryEmbedding.isEmpty()) return ftsResults
+
+        return ftsResults
+            .map { res ->
+                val blob = embeddingBlobs[res.chunkId]
+                val queryVec = when {
+                    blob == null || blob.isEmpty() -> null
+                    else -> {
+                        val dim = com.example.engine.TensorFlowLiteQuantizer.blobDimension(blob)
+                        when {
+                            dim == queryEmbedding.size -> queryEmbedding
+                            fallbackQueryEmbedding != null && dim == fallbackQueryEmbedding.size -> fallbackQueryEmbedding
+                            else -> null
+                        }
+                    }
+                }
+                val cosine = if (blob != null && queryVec != null) {
+                    com.example.engine.VectorSimilarityUtils
+                        .cosineSimilarityWithEmbeddingBlob(queryVec, blob)
+                        .coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                res.copy(cosineSimilarity = cosine, combinedScore = if (cosine > 0f) cosine else res.bm25Score)
+            }
+            .sortedWith(
+                compareByDescending<SearchResult> { it.combinedScore }
+                    .thenByDescending { it.bm25Score }
+            )
+    }
+
+    /**
+     * Loads the quantized embeddings of the given FTS candidates and ranks them with [rankBySemanticRelevance].
+     * Falls back to the unchanged (BM25-ordered) list if embedding the query fails.
+     */
+    private suspend fun semanticallyRankFtsResults(query: String, ftsResults: List<SearchResult>): List<SearchResult> {
+        if (ftsResults.isEmpty()) return ftsResults
+        return try {
+            val queryEmbedding = repository.embedQuery(query)
+            val blobs = repository.loadEmbeddingBlobs(ftsResults.map { it.chunkId })
+            val needsFallback = blobs.values.any { blob ->
+                val dim = com.example.engine.TensorFlowLiteQuantizer.blobDimension(blob)
+                dim > 0 && dim != queryEmbedding.size
+            }
+            val fallback = if (needsFallback) repository.embeddingEngine.embedText(query) else null
+            rankBySemanticRelevance(ftsResults, queryEmbedding, blobs, fallback)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ftsResults
         }
     }
 
@@ -267,7 +344,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _reindexingModelProgress.value = 0.05f
         _reindexingModelStatus.value = "Starting re-indexing with ${activeEmbeddingModel.value.shortName}…"
 
-        viewModelScope.launch {
+        reindexJob = viewModelScope.launch {
             try {
                 val updatedCount = repository.reindexAllDocumentsWithActiveModel { cur, total, file ->
                     val pct = if (total > 0) cur.toFloat() / total.toFloat() else 0.5f
@@ -279,6 +356,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(1200)
                 performSearch(_query.value, _searchMode.value, _selectedTag.value)
                 onComplete?.invoke(updatedCount)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _reindexingModelStatus.value = "Re-indexing stopped"
+                throw e
             } catch (e: Exception) {
                 _reindexingModelStatus.value = "Re-indexing error: ${e.message}"
             } finally {
@@ -339,6 +419,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val folderMonitorStatus: StateFlow<String> = _folderMonitorStatus.asStateFlow()
 
+    // --- Start / Stop indexing ---
+    /** True after the user pressed Stop; background scans stay off until indexing is started again. */
+    val isIndexingStoppedByUser: StateFlow<Boolean> = IndexingController.stoppedByUserFlow(application)
+
+    private val _isDocumentIndexRunning = MutableStateFlow(false)
+
+    /** True while any indexing work is running: manual index jobs, background scans, chat import or model re-index. */
+    val isIndexingActive: StateFlow<Boolean> = combine(
+        _indexingState,
+        _isDocumentIndexRunning,
+        _fileObserverStatus,
+        chatIndexingProgress,
+        _isReindexingModel
+    ) { state, docIndexRunning, scan, chat, reindexing ->
+        state is IndexingState.Progress ||
+                docIndexRunning ||
+                scan.isRunning ||
+                chat is com.example.service.ChatIndexingProgress.Active ||
+                reindexing
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private var reindexJob: Job? = null
+
     val designatedMonitoredFolder: java.io.File
         get() = com.example.worker.FolderMonitorWorker.getDesignatedFolder(getApplication())
 
@@ -379,6 +482,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var searchJob: Job? = null
+    private var fullCrawlRequested = false
+    private var downloadsCrawlRequested = false
 
     init {
         com.example.engine.HardwareMonitor.startMonitoring(application, viewModelScope)
@@ -404,21 +509,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Auto-crawl device Downloads & storage for real PDFs on launch
         viewModelScope.launch {
             delay(300)
+            // The user pressed Stop earlier: do not start anything on their behalf.
+            if (IndexingController.isStoppedByUser(application)) return@launch
             val directUris = repository.getIndexedFileUrisDirect()
             if (directUris.isEmpty()) {
-                // First launch: Automatically trigger indexing of user's Downloads & device PDFs
-                indexDownloadsDirectory()
-                if (hasAllFilesAccess()) {
-                    indexEntireSystemStorage()
-                }
+                // First launch: index the user's Downloads (or the whole storage when permitted)
+                autoCrawlOnPermissionGranted()
             } else {
-                // Trigger auto-scan of Downloads, WhatsApp, and storage folders for newly downloaded/changed files
+                // Later launches: one quiet check for new or changed files. It never shows a progress card;
+                // the periodic scan (every 15 min) is already scheduled by DocuVectorApp.
                 delay(500)
-                com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(application)
-                triggerFolderMonitorScan()
+                com.example.worker.FolderMonitorWorker.triggerImmediateScan(application)
+                // The whole-storage crawl runs once, as soon as "All files access" is granted.
+                autoCrawlOnPermissionGranted()
             }
-            com.example.worker.DownloadsFileObserverWorker.scheduleDownloadsObserver(application)
-            com.example.worker.PdfSyncWorker.schedulePdfSync(application)
         }
 
         // Keep document list refreshed when total files count changes and query is empty
@@ -429,6 +533,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        // Reflect manual index jobs in the Start/Stop button even if they were started before this screen opened
+        viewModelScope.launch {
+            workManager.getWorkInfosByTagFlow(DocumentIndexWorker.TAG).collect { infos ->
+                _isDocumentIndexRunning.value = infos.any { it.state == WorkInfo.State.RUNNING }
+            }
+        }
+
         // Track FileObserver, FolderMonitor, & PdfSync background tasks progress in real-time
         viewModelScope.launch {
             combine(
@@ -455,9 +566,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isRunning = true,
                         isMonitoringActive = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication()),
                         activeTaskName = when {
-                            isDownloads -> "Downloads FileObserver"
-                            isPdfSync -> "PDF Sync Worker"
-                            else -> "Folder Monitor Task"
+                            isDownloads -> "Downloads scan"
+                            isPdfSync -> "PDF sync"
+                            else -> "Folder scan"
                         },
                         currentFile = curFile,
                         currentPhase = phase,
@@ -491,9 +602,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     FileObserverProgressState(
                         isRunning = false,
                         isMonitoringActive = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication()),
-                        activeTaskName = "Downloads & Folder FileObserver",
+                        activeTaskName = "Background scan",
                         currentFile = null,
-                        currentPhase = "Background monitoring active",
+                        currentPhase = "Idle",
                         processedCount = 0,
                         totalCount = 0,
                         percent = 0,
@@ -509,18 +620,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun triggerImmediateFileObserverScan() {
-        com.example.worker.DownloadsFileObserverWorker.triggerImmediateScan(getApplication())
-        com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
-        com.example.worker.PdfSyncWorker.triggerImmediateSync(getApplication())
-    }
-
-    fun toggleFileObserverMonitoring() {
-        val current = com.example.worker.FolderMonitorWorker.isMonitoringEnabled(getApplication())
-        com.example.worker.FolderMonitorWorker.setMonitoringEnabled(getApplication(), !current)
-        _fileObserverStatus.value = _fileObserverStatus.value.copy(
-            isMonitoringActive = !current
-        )
+    /** Turns the periodic background scan for new or changed files on or off. */
+    fun setAutoScanEnabled(enabled: Boolean) {
+        com.example.worker.FolderMonitorWorker.setMonitoringEnabled(getApplication(), enabled)
+        _fileObserverStatus.value = _fileObserverStatus.value.copy(isMonitoringActive = enabled)
     }
 
     fun toggleMultiSelectMode(enable: Boolean? = null) {
@@ -580,6 +683,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun triggerFolderMonitorScan(onResult: ((newFiles: Int, newChunks: Int, status: String) -> Unit)? = null) {
+        IndexingController.resume(getApplication())
         viewModelScope.launch {
             _indexingState.value = IndexingState.Progress(
                 current = 1,
@@ -589,23 +693,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 currentPhase = "Scanning folder for newly detected files…"
             )
             val workId = com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
-            workManager.getWorkInfoByIdFlow(workId).collect { workInfo ->
-                if (workInfo == null) return@collect
-                if (workInfo.state.isFinished) {
-                    val newFiles = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_FILES_INDEXED, 0)
-                    val newChunks = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_CHUNKS_INDEXED, 0)
-                    val msg = workInfo.outputData.getString(com.example.worker.FolderMonitorWorker.KEY_SCAN_MESSAGE)
-                        ?: "Monitored folder check complete."
-                    _folderMonitorStatus.value = msg
-                    _indexingState.value = IndexingState.Completed(
-                        chunksCount = newChunks,
-                        message = msg,
-                        failedCount = 0
-                    )
-                    loadAllIndexedDocuments()
-                    onResult?.invoke(newFiles, newChunks, msg)
-                }
+            val workInfo = workManager.getWorkInfoByIdFlow(workId).first { it != null && it.state.isFinished }
+                ?: return@launch
+            if (workInfo.state == WorkInfo.State.CANCELLED) {
+                // Stopped by the user (or replaced by a newer scan): nothing to report.
+                if (_indexingState.value is IndexingState.Progress) _indexingState.value = IndexingState.Idle
+                return@launch
             }
+            val newFiles = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_FILES_INDEXED, 0)
+            val newChunks = workInfo.outputData.getInt(com.example.worker.FolderMonitorWorker.KEY_NEW_CHUNKS_INDEXED, 0)
+            val msg = workInfo.outputData.getString(com.example.worker.FolderMonitorWorker.KEY_SCAN_MESSAGE)
+                ?: "Monitored folder check complete."
+            _folderMonitorStatus.value = msg
+            _indexingState.value = IndexingState.Completed(
+                chunksCount = newChunks,
+                message = msg,
+                failedCount = 0
+            )
+            loadAllIndexedDocuments()
+            onResult?.invoke(newFiles, newChunks, msg)
         }
     }
 
@@ -784,7 +890,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val start = System.currentTimeMillis()
             try {
                 // Fetch topK = 60 to have ample candidates for interactive filtering and sorting
-                val results = repository.search(q, mode, topK = 60, filterTag = tag)
+                // KEYWORD mode: let SQLite FTS pick the candidates, then rank only those by cosine
+                // similarity against their quantized embeddings (instead of scanning the whole corpus).
+                val isKeyword = mode == SearchMode.KEYWORD && q.isNotBlank()
+                var results = repository.search(q, mode, topK = 60, filterTag = tag, semanticScoring = !isKeyword)
+                if (isKeyword) {
+                    results = semanticallyRankFtsResults(q, results)
+                }
                 _rawSearchResults.value = results
                 _searchLatencyMs.value = System.currentTimeMillis() - start
                 if (q.isNotBlank()) {
@@ -798,19 +910,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Enqueues a manual indexing job. Explicitly starting indexing counts as the user turning it back on,
+     * so the stopped flag is cleared and the periodic background scan is restored.
+     */
+    private fun enqueueIndexRequest(request: androidx.work.OneTimeWorkRequest, uniqueName: String) {
+        IndexingController.resume(getApplication())
+        workManager.enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
+        observeWork(request.id)
+    }
+
     fun startIndexing(treeUri: Uri) {
         val request = OneTimeWorkRequestBuilder<DocumentIndexWorker>()
             .setInputData(workDataOf(DocumentIndexWorker.KEY_TREE_URI to treeUri.toString()))
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -822,13 +938,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -841,13 +951,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     fun hasAllFilesAccess(): Boolean {
@@ -861,12 +965,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Automatic initial crawl, safe to call on every app resume: each crawl type runs at most once.
+     * The whole-storage crawl is remembered across launches (see [IndexingController.isFullStorageCrawlDone]),
+     * so reopening the app never restarts a device-wide scan; later changes are picked up by the cheap periodic scan.
+     */
     fun autoCrawlOnPermissionGranted() {
-        viewModelScope.launch {
+        val app = getApplication<Application>()
+        if (IndexingController.isStoppedByUser(app)) return
+        if (hasAllFilesAccess()) {
+            if (fullCrawlRequested || IndexingController.isFullStorageCrawlDone(app)) return
+            fullCrawlRequested = true
+            indexEntireSystemStorage()
+        } else if (!downloadsCrawlRequested) {
+            downloadsCrawlRequested = true
             indexDownloadsDirectory()
-            if (hasAllFilesAccess()) {
-                indexEntireSystemStorage()
-            }
         }
     }
 
@@ -880,13 +993,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -900,13 +1007,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_work")
     }
 
     /**
@@ -959,11 +1060,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Stops all indexing right now (manual jobs, background scans, chat import, model re-index) and keeps
+     * background indexing off until [startAllIndexing] is called.
+     */
     fun stopIndexing() {
-        workManager.cancelAllWorkByTag(DocumentIndexWorker.TAG)
-        workManager.cancelUniqueWork("document_indexing_work")
-        workManager.cancelUniqueWork("document_indexing_sample_work")
+        IndexingController.stopAll(getApplication())
+        reindexJob?.cancel()
         _indexingState.value = IndexingState.Idle
+    }
+
+    /** Clears the user's "stopped" flag and restores background scanning without starting a job yet. */
+    fun allowIndexing() {
+        IndexingController.resume(getApplication())
+    }
+
+    /**
+     * Starts indexing: turns background scanning back on and indexes everything not yet in the index
+     * (the whole storage when "All files access" is granted, otherwise the Downloads folder).
+     * Files that are already indexed and unchanged are skipped.
+     */
+    fun startAllIndexing() {
+        if (hasAllFilesAccess()) {
+            indexEntireSystemStorage()
+        } else {
+            indexDownloadsDirectory()
+        }
+        com.example.worker.FolderMonitorWorker.triggerImmediateScan(getApplication())
     }
 
     fun loadSampleKnowledgeBase() {
@@ -972,13 +1095,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_sample_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
     fun load100SampleFiles() {
@@ -987,13 +1104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .addTag(DocumentIndexWorker.TAG)
             .build()
 
-        workManager.enqueueUniqueWork(
-            "document_indexing_sample_work",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-
-        observeWork(request.id)
+        enqueueIndexRequest(request, "document_indexing_sample_work")
     }
 
     /**

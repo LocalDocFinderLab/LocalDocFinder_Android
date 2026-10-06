@@ -72,6 +72,10 @@
                 android:resource="@xml/docuvector_widget_info" />
         </receiver>
 
+        <receiver
+            android:name=".worker.IndexingControlReceiver"
+            android:exported="false" />
+
         <service
             android:name=".service.TextEmbeddingService"
             android:exported="false" />

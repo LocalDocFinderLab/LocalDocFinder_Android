@@ -216,6 +216,21 @@ object VectorSimilarityUtils {
     }
 
     /**
+     * Cosine similarity between a float query embedding and a stored embedding BLOB from Room.
+     * Quantized INT8 BLOBs are scored in the quantized domain (no dequantization allocation);
+     * legacy unquantized float BLOBs fall back to the regular float path.
+     */
+    @JvmStatic
+    fun cosineSimilarityWithEmbeddingBlob(query: FloatArray, blob: ByteArray): Float {
+        if (query.isEmpty() || blob.isEmpty()) return 0f
+        return if (TensorFlowLiteQuantizer.isQuantizedBlob(blob)) {
+            TensorFlowLiteQuantizer.cosineSimilarityWithQuantizedBlob(query, blob)
+        } else {
+            calculateCosineSimilarity(query, byteArrayToFloatArrayLegacy(blob))
+        }
+    }
+
+    /**
      * Performs vector search (K-Nearest Neighbors using Cosine Similarity) over a list of
      * Room [DocumentChunkEntity] records retrieved from the SQLite database.
      *

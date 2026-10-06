@@ -20,6 +20,13 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PendingActions
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -106,9 +113,15 @@ fun IndexingStatusCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (indexingState is IndexingState.Progress) "Processing files…" else "All files scanned & ready",
+                            text = when {
+                                indexingState is IndexingState.Progress -> "Processing files…"
+                                isIndexingActive -> "Scanning for new files…"
+                                isStoppedByUser -> "Indexing stopped"
+                                else -> "All files scanned & ready"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("indexing_status_text")
                         )
                     }
                 }
@@ -232,6 +245,84 @@ fun IndexingStatusCard(
                             )
                         }
                     }
+                }
+            }
+
+            if (onStartIndexingClick != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                if (isIndexingActive) {
+                    FilledTonalButton(
+                        onClick = onStopIndexingClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_stop_indexing"),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Stop indexing", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Button(
+                        onClick = onStartIndexingClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_start_indexing")
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isStoppedByUser) "Start indexing" else "Scan & index now",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (isStoppedByUser) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Nothing runs in the background until you start indexing again.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (onToggleAutoScan != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Auto-scan for new files",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = when {
+                                isStoppedByUser -> "Off while indexing is stopped."
+                                autoScanEnabled -> "Checks Downloads & folders every 15 min. ${lastScanMessage.orEmpty()}".trim()
+                                else -> "Off. New files are only indexed when you start indexing."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("auto_scan_description")
+                        )
+                    }
+                    Switch(
+                        checked = autoScanEnabled && !isStoppedByUser,
+                        onCheckedChange = onToggleAutoScan,
+                        enabled = !isStoppedByUser,
+                        modifier = Modifier.testTag("switch_auto_scan")
+                    )
                 }
             }
         }

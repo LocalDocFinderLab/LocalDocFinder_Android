@@ -53,7 +53,8 @@ class HybridSearchEngine(
         topK: Int = 30,
         filterTag: String? = null,
         fileTypeFilter: String? = null,
-        sortOrder: SearchSortOrder = SearchSortOrder.RELEVANCE
+        sortOrder: SearchSortOrder = SearchSortOrder.RELEVANCE,
+        semanticScoring: Boolean = true
     ): List<SearchResult> = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
         val cleanQuery = query.trim()
@@ -101,13 +102,17 @@ class HybridSearchEngine(
         }
 
         // 1. Vector Search Pipeline
-        val queryEmbedding = if (unifiedModelManager != null) {
-            unifiedModelManager.embedText(cleanQuery, isQuery = true)
-        } else {
-            embeddingEngine.embedText(cleanQuery)
+        // KEYWORD callers can opt out of the full-corpus vector scan (semanticScoring = false) and instead
+        // re-rank just the FTS candidates by cosine similarity themselves (see MainViewModel).
+        val scanVectors = mode != SearchMode.KEYWORD || semanticScoring
+        val queryEmbedding = when {
+            !scanVectors -> FloatArray(0)
+            unifiedModelManager != null -> unifiedModelManager.embedText(cleanQuery, isQuery = true)
+            else -> embeddingEngine.embedText(cleanQuery)
         }
-        val allChunks = dao.getAllChunks()
-        if (allChunks.isEmpty()) return@withContext emptyList()
+        val allChunks = if (scanVectors) dao.getAllChunks() else emptyList()
+        val corpusSize = if (scanVectors) allChunks.size else dao.getTotalChunksCountDirect()
+        if (corpusSize == 0) return@withContext emptyList()
 
         val vectorRanked = ArrayList<Pair<DocumentChunkEntity, Float>>(allChunks.size)
         for (chunk in allChunks) {
@@ -194,7 +199,7 @@ class HybridSearchEngine(
         }
 
         // Calculate BM25 relevance scores for candidate chunks
-        val bm25ScoresMap = calculateBm25Scores(filteredCandidates, queryTokens, allChunks.size)
+        val bm25ScoresMap = calculateBm25Scores(filteredCandidates, queryTokens, corpusSize)
 
         val results = filteredCandidates.map { chunk ->
             val vRank = vectorRankMap[chunk.id]

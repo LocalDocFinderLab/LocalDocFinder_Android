@@ -88,6 +88,11 @@ class DownloadsFileObserverWorker(
     private var activeObserver: FileObserver? = null
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.example.worker.IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping.")
+            return@withContext Result.success(workDataOf(KEY_OBSERVER_MESSAGE to "Skipped: indexing is stopped"))
+        }
+
         val repository = DocumentRepository(context)
 
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -149,7 +154,7 @@ class DownloadsFileObserverWorker(
             val candidateFilesMap = parser.scanDownloadDirectory().associateBy { it.uri.toString() }
 
             val dao = com.example.data.local.AppDatabase.getInstance(context).documentChunkDao()
-            val indexedUris = dao.getAllChunks().map { it.fileUri }.toSet()
+            val indexedUris = dao.getIndexedFilesDirect().toSet()
 
             val unindexedCandidates = candidateFilesMap.filterKeys { !indexedUris.contains(it) }.values.toList()
             val totalCandidates = unindexedCandidates.size
@@ -170,6 +175,13 @@ class DownloadsFileObserverWorker(
                     )
                 )
 
+                IndexingNotifier.show(
+                    context,
+                    IndexingNotifier.ID_DOWNLOADS_SCAN,
+                    "Indexing downloads",
+                    "$fileName (${idx + 1}/$totalCandidates)",
+                    (idx * 100) / totalCandidates
+                )
                 val res = repository.indexDocumentSafely(docFile)
                 if (res.isSuccess) {
                     newlyDetectedFiles++
@@ -205,6 +217,13 @@ class DownloadsFileObserverWorker(
                         )
                     )
 
+                    IndexingNotifier.show(
+                        context,
+                        IndexingNotifier.ID_DOWNLOADS_SCAN,
+                        "Indexing downloads",
+                        "${file.name} (${idx + 1}/$totalPending)",
+                        (idx * 100) / totalPending
+                    )
                     val res = repository.indexDocumentSafely(docFile)
                     if (res.isSuccess) {
                         newlyDetectedFiles++
@@ -234,6 +253,8 @@ class DownloadsFileObserverWorker(
                     KEY_OBSERVER_MESSAGE to msg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error in DownloadsFileObserverWorker: ${e.message}", e)
             Result.retry()
@@ -241,6 +262,7 @@ class DownloadsFileObserverWorker(
             try {
                 activeObserver?.stopWatching()
             } catch (_: Exception) {}
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_DOWNLOADS_SCAN)
         }
     }
 }

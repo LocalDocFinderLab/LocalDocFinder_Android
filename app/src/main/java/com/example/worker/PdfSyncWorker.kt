@@ -88,6 +88,11 @@ class PdfSyncWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.example.worker.IndexingController.isStoppedByUser(context)) {
+            Log.i(TAG, "Indexing is stopped by the user. Skipping.")
+            return@withContext Result.success(workDataOf(KEY_SYNC_MESSAGE to "Skipped: indexing is stopped"))
+        }
+
         Log.i(TAG, "PdfSyncWorker sync cycle started. Initializing Downloads folder scan.")
         val repository = DocumentRepository(context)
         val parser = DocumentParser(context)
@@ -121,8 +126,7 @@ class PdfSyncWorker(
             Log.i(TAG, "Filtered ${pdfAndDocs.size} PDF & text document files for indexing consideration.")
 
             // 3. Fetch list of already indexed file URIs to avoid redundant embedding cycles
-            val allIndexedChunks = dao.getAllChunks()
-            val indexedUris = allIndexedChunks.map { it.fileUri }.toSet()
+            val indexedUris = dao.getIndexedFilesDirect().toSet()
             Log.i(TAG, "Room Database currently contains ${indexedUris.size} unique indexed document URIs.")
 
             // Identify un-indexed files
@@ -155,6 +159,13 @@ class PdfSyncWorker(
                 val percent = (((idx + 1).toFloat() / totalToProcess.toFloat()) * 100).toInt()
 
                 Log.i(TAG, "Syncing and indexing file ${idx + 1}/$totalToProcess: $fileName")
+                IndexingNotifier.show(
+                    context,
+                    IndexingNotifier.ID_PDF_SYNC,
+                    "Indexing downloaded documents",
+                    "$fileName (${idx + 1}/$totalToProcess)",
+                    (idx * 100) / totalToProcess
+                )
 
                 setProgress(
                     workDataOf(
@@ -197,9 +208,13 @@ class PdfSyncWorker(
                     KEY_SYNC_MESSAGE to successMsg
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Fatal error inside PdfSyncWorker sync cycle: ${e.message}", e)
             Result.retry()
+        } finally {
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_PDF_SYNC)
         }
     }
 }

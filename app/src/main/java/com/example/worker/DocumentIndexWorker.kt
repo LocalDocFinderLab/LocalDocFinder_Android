@@ -1,16 +1,11 @@
 package com.example.worker
 
-import android.app.Notification
 import android.content.Context
-import android.content.pm.ServiceInfo
 import android.net.Uri
-import android.os.Build
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.example.DocuVectorApp
 import com.example.data.repository.DocumentRepository
 import com.example.engine.IndexingPowerPolicy
 import kotlinx.coroutines.Dispatchers
@@ -58,17 +53,18 @@ class DocumentIndexWorker(
         val fileUriStrings = inputData.getStringArray(KEY_FILE_URIS)
 
         try {
-            setForeground(createForegroundInfo(0, "Starting offline indexer…", "Initializing LiteRT pipeline"))
+            startForegroundSafely("Starting offline indexer…", "Initializing LiteRT pipeline")
 
             var totalIndexedChunks = 0
             val failures = mutableListOf<String>()
 
             if (shouldIndexEntireSystem) {
                 // Entire System scan: Scans device storage, ignoring system files, packages, databases, and videos
-                setForegroundAsync(createForegroundInfo(5, "Scanning system storage…", "Ignoring system files, packages, databases, and videos"))
+                postProgress(5, "Scanning system storage…", "Ignoring system files, packages, databases, and videos")
                 val files = repository.documentParser.scanEntireSystemStorage()
 
                 if (files.isEmpty()) {
+                    IndexingController.setFullStorageCrawlDone(context, true)
                     return@withContext Result.success(
                         workDataOf(
                             KEY_INDEXED_CHUNKS to 0,
@@ -97,7 +93,7 @@ class DocumentIndexWorker(
                         val res = repository.indexDocumentSafely(docFile) { step, cur, tot ->
                             val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
                             val pct = (((idx.toFloat() / externalFiles.size.toFloat()) * 100) + (subFactor / externalFiles.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-                            setForegroundAsync(createForegroundInfo(pct, "Indexing Seeded Files (${idx + 1}/${externalFiles.size})", "${file.name} • $step"))
+                            postProgress(pct, "Indexing Seeded Files (${idx + 1}/${externalFiles.size})", "${file.name} • $step")
                             setProgressAsync(
                                 workDataOf(
                                     KEY_PROGRESS_CURRENT to idx + 1,
@@ -117,7 +113,7 @@ class DocumentIndexWorker(
                         val title = "Indexing 100 Files ($overallPercent%)"
                         val content = "$currentFile ($current/$total)"
 
-                        setForegroundAsync(createForegroundInfo(overallPercent, title, content))
+                        postProgress(overallPercent, title, content)
                         setProgressAsync(
                             workDataOf(
                                 KEY_PROGRESS_CURRENT to current,
@@ -137,7 +133,7 @@ class DocumentIndexWorker(
                     val title = "Indexing Sample KB ($overallPercent%)"
                     val content = "$currentFile ($current/$total)"
 
-                    setForegroundAsync(createForegroundInfo(overallPercent, title, content))
+                    postProgress(overallPercent, title, content)
                     setProgressAsync(
                         workDataOf(
                             KEY_PROGRESS_CURRENT to current,
@@ -152,7 +148,7 @@ class DocumentIndexWorker(
                 failures.addAll(errors)
             } else if (shouldIndexDownloads) {
                 // Direct Scan of Download Folder: Bypasses Android 11+ SAF folder restriction
-                setForegroundAsync(createForegroundInfo(5, "Scanning Download folder…", "Searching regular docs and images"))
+                postProgress(5, "Scanning Download folder…", "Searching regular docs and images")
                 val files = repository.documentParser.scanDownloadDirectory()
 
                 if (files.isEmpty()) {
@@ -171,7 +167,7 @@ class DocumentIndexWorker(
                 failures.addAll(outcome.failures)
             } else if (shouldIndexAndroid) {
                 // Direct Scan of Android Folder: Bypasses Android 11+ SAF folder restriction for /Android
-                setForegroundAsync(createForegroundInfo(5, "Scanning Android folder…", "Searching documents, media & files"))
+                postProgress(5, "Scanning Android folder…", "Searching documents, media & files")
                 val files = repository.documentParser.scanAndroidDirectory()
 
                 if (files.isEmpty()) {
@@ -190,7 +186,7 @@ class DocumentIndexWorker(
                 failures.addAll(outcome.failures)
             } else if (fileUriStrings != null && fileUriStrings.isNotEmpty()) {
                 // Multi-Document Pick mode: Indexes exact files picked by the user
-                setForegroundAsync(createForegroundInfo(5, "Processing selected files…", "${fileUriStrings.size} files queued"))
+                postProgress(5, "Processing selected files…", "${fileUriStrings.size} files queued")
                 val files = fileUriStrings.mapNotNull {
                     androidx.documentfile.provider.DocumentFile.fromSingleUri(context, Uri.parse(it))
                 }
@@ -201,7 +197,7 @@ class DocumentIndexWorker(
                 failures.addAll(outcome.failures)
             } else if (!treeUriStr.isNullOrEmpty()) {
                 val treeUri = Uri.parse(treeUriStr)
-                setForegroundAsync(createForegroundInfo(5, "Scanning directory tree…", "Discovering supported documents"))
+                postProgress(5, "Scanning directory tree…", "Discovering supported documents")
 
                 val files = repository.documentParser.scanDirectory(treeUri)
 
@@ -235,6 +231,9 @@ class DocumentIndexWorker(
                     KEY_ERROR_SUMMARY to (errorSummary ?: "")
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Stopped by the user or the system: let WorkManager mark the work cancelled.
+            throw e
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(
@@ -242,6 +241,9 @@ class DocumentIndexWorker(
                     KEY_ERROR_SUMMARY to "Unexpected indexing error: ${e.localizedMessage ?: "Unknown failure"}"
                 )
             )
+        } finally {
+            // Whatever the outcome (done, failed, cancelled) the status-bar notification goes away on its own.
+            IndexingNotifier.cancel(context, IndexingNotifier.ID_DOCUMENT_INDEX)
         }
     }
 
@@ -313,21 +315,32 @@ class DocumentIndexWorker(
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
-        return createForegroundInfo(0, "DocuVector Offline Indexer", "Preparing document indexer…")
+        return IndexingNotifier.foregroundInfo(
+            IndexingNotifier.ID_DOCUMENT_INDEX,
+            IndexingNotifier.build(context, "DocuVector Offline Indexer", "Preparing document indexer…", null)
+        )
     }
 
-    private fun createForegroundInfo(progressPercent: Int, title: String, message: String): ForegroundInfo {
-        val notification = buildNotification(title, message, progressPercent)
+    private var lastPostedAtMillis = 0L
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(
-                DocuVectorApp.NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+    /**
+     * Shows the notification as a foreground service so Android keeps the indexer alive. If the system refuses
+     * to start a foreground service right now, fall back to a plain ongoing notification instead of failing.
+     */
+    private suspend fun startForegroundSafely(title: String, message: String) {
+        try {
+            setForeground(
+                IndexingNotifier.foregroundInfo(
+                    IndexingNotifier.ID_DOCUMENT_INDEX,
+                    IndexingNotifier.build(context, title, message, 0)
+                )
             )
-        } else {
-            ForegroundInfo(DocuVectorApp.NOTIFICATION_ID, notification)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            IndexingNotifier.show(context, IndexingNotifier.ID_DOCUMENT_INDEX, title, message, 0)
         }
+        lastPostedAtMillis = System.currentTimeMillis()
     }
 
     /** Appends the live indexing speed (Turbo / Slowed to N% / Paused) to a notification line. */
