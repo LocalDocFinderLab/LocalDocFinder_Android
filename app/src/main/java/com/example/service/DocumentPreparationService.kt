@@ -13,6 +13,7 @@ import com.example.data.local.DocumentChunkDao
 import com.example.data.local.DocumentChunkEntity
 import com.example.engine.DocumentParser
 import com.example.engine.OnDeviceEmbeddingEngine
+import com.example.engine.model.UnifiedEmbeddingManager
 import com.example.engine.ParsedChunk
 import com.example.engine.ParseResult
 import kotlinx.coroutines.CoroutineScope
@@ -104,7 +105,7 @@ class DocumentPreparationService : Service() {
 
     private var appContext: Context? = null
     private var documentParser: DocumentParser? = null
-    private var embeddingEngine: OnDeviceEmbeddingEngine? = null
+    private var modelManager: UnifiedEmbeddingManager? = null
     private var chunkDao: DocumentChunkDao? = null
 
     private val _ingestionEvents = MutableSharedFlow<IngestionEvent>(extraBufferCapacity = 64)
@@ -143,8 +144,8 @@ class DocumentPreparationService : Service() {
         if (documentParser == null) {
             documentParser = DocumentParser(ctx)
         }
-        if (embeddingEngine == null) {
-            embeddingEngine = OnDeviceEmbeddingEngine(ctx)
+        if (modelManager == null) {
+            modelManager = UnifiedEmbeddingManager.getInstance(ctx)
         }
         if (chunkDao == null) {
             chunkDao = AppDatabase.getInstance(ctx).documentChunkDao()
@@ -276,7 +277,7 @@ class DocumentPreparationService : Service() {
         _ingestionEvents.emit(IngestionEvent.TextExtracted(fileName, prepared.fullText.length, prepared.chunks.size))
 
         val dao = chunkDao ?: throw IllegalStateException("Database DAO not initialized")
-        val engine = embeddingEngine ?: throw IllegalStateException("Embedding engine not initialized")
+        val manager = modelManager ?: throw IllegalStateException("Embedding engine not initialized")
 
         // Incremental check: Compare chunk hashes against existing database records
         val existingChunks = dao.getChunksForFile(prepared.fileUri)
@@ -310,12 +311,13 @@ class DocumentPreparationService : Service() {
                 _ingestionEvents.emit(IngestionEvent.EmbeddingBatch(fileName, b + 1, totalBatches, percent))
 
                 val texts = batchList.map { it.text }
-                val embeddings = engine.embedBatch(texts, batchSize = batchSize)
+                val tagged = manager.embedBatchTagged(texts, isQuery = false, batchSize = batchSize)
+                val embeddings = tagged.vectors
 
                 for (i in batchList.indices) {
                     val c = batchList[i]
                     val emb = embeddings[i]
-                    val blob = engine.floatArrayToByteArray(emb)
+                    val blob = com.example.engine.VectorSimilarityUtils.floatArrayToByteArray(emb)
 
                     finalEntities.add(
                         DocumentChunkEntity(
@@ -326,7 +328,7 @@ class DocumentPreparationService : Service() {
                             hash = c.hash,
                             timestamp = if (prepared.lastModified > 0) prepared.lastModified else System.currentTimeMillis(),
                             embeddingBlob = blob,
-                            metadata = com.example.engine.extraction.ChunkMetadata.forPages(c.page, c.pageEnd)
+                            metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
                         )
                     )
                 }

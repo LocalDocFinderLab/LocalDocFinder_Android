@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +40,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
@@ -52,11 +56,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import com.example.engine.model.EmbeddingModelType
 import kotlinx.coroutines.launch
 
@@ -64,6 +70,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun EmbeddingModelSheet(
     activeModel: EmbeddingModelType,
+    effectiveModel: EmbeddingModelType,
+    installedModels: Set<EmbeddingModelType>,
+    staleChunkCount: Int,
+    importStatus: String?,
+    onImportModel: (model: EmbeddingModelType, tflite: Uri, vocab: Uri) -> Unit,
+    onRemoveModel: (EmbeddingModelType) -> Unit,
+    onImportProblem: (String) -> Unit,
     isReindexing: Boolean,
     reindexingProgress: Float,
     reindexingStatus: String,
@@ -83,6 +96,25 @@ fun EmbeddingModelSheet(
     var testResultSimB by remember { mutableStateOf<Float?>(null) }
     var testLatency by remember { mutableStateOf<Long?>(null) }
     var isTestingBenchmark by remember { mutableStateOf(false) }
+
+    // "Import model files": the user picks model.tflite and vocab.txt together.
+    val context = LocalContext.current
+    var importTarget by remember { mutableStateOf<EmbeddingModelType?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val target = importTarget
+        importTarget = null
+        if (target != null && uris.isNotEmpty()) {
+            val named = uris.map { it to (DocumentFile.fromSingleUri(context, it)?.name.orEmpty().lowercase()) }
+            val tflite = named.firstOrNull { it.second.endsWith(".tflite") }?.first
+            val vocab = named.firstOrNull { it.second == "vocab.txt" }?.first
+                ?: named.firstOrNull { it.second.endsWith(".txt") }?.first
+            if (tflite != null && vocab != null) {
+                onImportModel(target, tflite, vocab)
+            } else {
+                onImportProblem("Select both files together: model.tflite and vocab.txt.")
+            }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -162,12 +194,39 @@ fun EmbeddingModelSheet(
                             color = Color(0xFF10B981)
                         )
                         Text(
-                            text = "Your documents and searches never leave this phone.",
+                            text = "Your documents and searches never leave this phone. Models are files on your device; the app never downloads or uploads anything for them.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+            }
+
+            if (activeModel != effectiveModel) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "${activeModel.shortName} isn't installed yet, so the ${effectiveModel.shortName} embedder is being used. Import its model files below to switch.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFB45309),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    )
+                }
+            }
+
+            if (!importStatus.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = importStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("model_import_status")
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -296,6 +355,44 @@ fun EmbeddingModelSheet(
                                 )
                             }
                         }
+
+                        if (!model.isBuiltIn) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val installed = model in installedModels
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (installed) "✓ Installed" else "Model files not installed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (installed) Color(0xFF10B981) else Color(0xFFF59E0B)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (installed) {
+                                        TextButton(onClick = { onRemoveModel(model) }) { Text("Remove") }
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            importTarget = model
+                                            importLauncher.launch(arrayOf("*/*"))
+                                        },
+                                        modifier = Modifier.testTag("btn_import_${model.id}")
+                                    ) {
+                                        Text(if (installed) "Replace files" else "Import model files")
+                                    }
+                                }
+                            }
+                            if (!installed) {
+                                Text(
+                                    text = "Pick model.tflite and vocab.txt together. Create them with tools/export_embedding_model.py (${model.sourceCheckpoint}, ${model.licence}).",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -318,10 +415,20 @@ fun EmbeddingModelSheet(
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Text(
-                        text = "Re-computes vector embeddings for all currently indexed documents using ${activeModel.shortName} to apply improved search accuracy instantly.",
+                        text = "Re-computes vector embeddings for all currently indexed documents using ${effectiveModel.shortName}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (staleChunkCount > 0) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "$staleChunkCount indexed sections were embedded with a different model. They still match keywords, but are skipped by semantic search until you re-index.",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFB45309),
+                            modifier = Modifier.testTag("stale_chunks_notice")
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -359,7 +466,7 @@ fun EmbeddingModelSheet(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Re-index Knowledge Base with ${activeModel.shortName}")
+                            Text("Re-index Knowledge Base with ${effectiveModel.shortName}")
                         }
                     }
                 }

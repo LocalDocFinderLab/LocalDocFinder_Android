@@ -192,6 +192,10 @@ fun MainScreen(
 
     // Model Management
     val activeEmbeddingModel by viewModel.activeEmbeddingModel.collectAsStateWithLifecycle()
+    val effectiveEmbeddingModel by viewModel.effectiveEmbeddingModel.collectAsStateWithLifecycle()
+    val installedEmbeddingModels by viewModel.installedEmbeddingModels.collectAsStateWithLifecycle()
+    val staleChunkCount by viewModel.staleChunkCount.collectAsStateWithLifecycle()
+    val modelImportStatus by viewModel.modelImportStatus.collectAsStateWithLifecycle()
     val isReindexingModel by viewModel.isReindexingModel.collectAsStateWithLifecycle()
     val reindexingModelProgress by viewModel.reindexingModelProgress.collectAsStateWithLifecycle()
     val reindexingModelStatus by viewModel.reindexingModelStatus.collectAsStateWithLifecycle()
@@ -397,7 +401,7 @@ fun MainScreen(
                 includeChatBackups = includeChatBackups,
                 activeAvailableUpdate = activeAvailableUpdate,
                 isDarkTheme = isDarkTheme,
-                activeEmbeddingModel = activeEmbeddingModel,
+                activeEmbeddingModel = effectiveEmbeddingModel,
                 currentSortOrder = sortOrder,
                 onSelectSortOrder = { newSort ->
                     viewModel.setSortOrder(newSort)
@@ -1103,6 +1107,13 @@ fun MainScreen(
         val modelSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         com.example.ui.components.EmbeddingModelSheet(
             activeModel = activeEmbeddingModel,
+            effectiveModel = effectiveEmbeddingModel,
+            installedModels = installedEmbeddingModels,
+            staleChunkCount = staleChunkCount,
+            importStatus = modelImportStatus,
+            onImportModel = { model, tflite, vocab -> viewModel.importEmbeddingModel(model, tflite, vocab) },
+            onRemoveModel = { model -> viewModel.removeEmbeddingModel(model) },
+            onImportProblem = { message -> viewModel.reportModelImportProblem(message) },
             isReindexing = isReindexingModel,
             reindexingProgress = reindexingModelProgress,
             reindexingStatus = reindexingModelStatus,
@@ -1111,7 +1122,7 @@ fun MainScreen(
             },
             onReindexClick = {
                 viewModel.reindexKnowledgeBaseWithActiveModel { count ->
-                    Toast.makeText(context, "Re-indexed $count chunks with ${activeEmbeddingModel.shortName}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Re-indexed $count chunks with ${effectiveEmbeddingModel.shortName}", Toast.LENGTH_LONG).show()
                 }
             },
             onTestBenchmark = { q, textA, textB ->

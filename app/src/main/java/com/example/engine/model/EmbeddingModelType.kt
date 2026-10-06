@@ -1,5 +1,14 @@
 package com.example.engine.model
 
+import com.example.engine.embedding.Pooling
+
+/**
+ * The embedding models the app can index and search with. All of them run on the phone.
+ *
+ * The transformer models are open-weight BERT-family sentence embedders exported to TensorFlow Lite
+ * (`model.tflite` + `vocab.txt`, see `tools/export_embedding_model.py` and [com.example.engine.embedding.EmbeddingModelStore]).
+ * Scores are the published MTEB benchmark numbers for the original (un-quantised) checkpoints.
+ */
 enum class EmbeddingModelType(
     val id: String,
     val displayName: String,
@@ -8,26 +17,92 @@ enum class EmbeddingModelType(
     val dimensions: Int,
     val accuracyRating: String,
     val latencyLabel: String,
-    val description: String
+    val description: String,
+    /** Folder holding `model.tflite` + `vocab.txt`; null for the built-in embedder that needs no files. */
+    val directory: String? = null,
+    val pooling: Pooling = Pooling.MEAN,
+    /** Prepended to search queries (some retrieval models are trained with an instruction). */
+    val queryPrefix: String = "",
+    /** Prepended to document chunks when indexing. */
+    val documentPrefix: String = "",
+    /** Hugging Face checkpoint the TFLite files are exported from (used by the export script and docs). */
+    val sourceCheckpoint: String = "",
+    val licence: String = "",
+    /** Sequence length the export script bakes into the TFLite graph by default. */
+    val exportSeqLength: Int = 256
 ) {
-    ON_DEVICE_NEURAL_BGE(
-        id = "on_device_neural_bge",
-        displayName = "On-Device BGE Neural Engine",
-        shortName = "On-Device Neural (BGE)",
-        modelName = "BGE/MiniLM-Enhanced Neural Manifold",
+    BGE_SMALL_EN_V15(
+        id = "bge_small_en_v15",
+        displayName = "BGE Small v1.5 (Recommended)",
+        shortName = "BGE Small",
+        modelName = "BAAI/bge-small-en-v1.5 · INT8 TFLite",
         dimensions = 384,
-        accuracyRating = "91.5% Neural Accuracy",
-        latencyLabel = "< 5 ms (Zero Latency)",
-        description = "High-precision on-device neural embedding engine with multi-head attention pooling, BM25 token saliency, and pre-trained semantic concept clusters. 100% offline & private."
+        accuracyRating = "MTEB retrieval 51.7",
+        latencyLabel = "≈34 MB · fast",
+        description = "Best quality for its size. Retrieval-tuned 33M-parameter BERT embedder; understands that " +
+            "\"how do vaccines work\" matches a passage about mRNA delivery. English. Runs offline.",
+        directory = "bge_small_en_v15",
+        pooling = Pooling.CLS,
+        queryPrefix = "Represent this sentence for searching relevant passages: ",
+        sourceCheckpoint = "BAAI/bge-small-en-v1.5",
+        licence = "MIT"
     ),
-    ONNX_SENTENCE_BERT_TFLITE(
-        id = "onnx_sentence_bert_tflite",
-        displayName = "Sentence-BERT ONNX-TFLite (SOTA Local)",
-        shortName = "Sentence-BERT (ONNX-TFLite)",
-        modelName = "Sentence-BERT all-MiniLM-L6-v2 (ONNX TFLite INT8)",
+    BGE_BASE_EN_V15(
+        id = "bge_base_en_v15",
+        displayName = "BGE Base v1.5 (Highest quality)",
+        shortName = "BGE Base",
+        modelName = "BAAI/bge-base-en-v1.5 · INT8 TFLite",
+        dimensions = 768,
+        accuracyRating = "MTEB retrieval 53.3",
+        latencyLabel = "≈110 MB · slower",
+        description = "Larger 110M-parameter sibling of BGE Small with 768-dimensional vectors. Noticeably better " +
+            "on hard queries, ~3x slower to index and 2x the index size. English. Runs offline.",
+        directory = "bge_base_en_v15",
+        pooling = Pooling.CLS,
+        queryPrefix = "Represent this sentence for searching relevant passages: ",
+        sourceCheckpoint = "BAAI/bge-base-en-v1.5",
+        licence = "MIT"
+    ),
+    ALL_MINILM_L6_V2(
+        id = "all_minilm_l6_v2",
+        displayName = "MiniLM L6 v2 (Fastest)",
+        shortName = "MiniLM L6",
+        modelName = "sentence-transformers/all-MiniLM-L6-v2 · INT8 TFLite",
         dimensions = 384,
-        accuracyRating = "95.8% SOTA Local Accuracy",
-        latencyLabel = "< 8 ms (Hardware Accelerated)",
-        description = "Optimized ONNX Sentence-BERT (all-MiniLM-L6-v2) model exported to TensorFlow Lite with mean-pooling and INT8 dynamic quantization for superior local semantic quality."
-    )
+        accuracyRating = "MTEB retrieval 42.0",
+        latencyLabel = "≈23 MB · fastest",
+        description = "Tiny 22M-parameter general-purpose sentence embedder. Lowest battery and storage cost; " +
+            "good for similar-document and topic matching, weaker than BGE on question-style queries. English.",
+        directory = "all_minilm_l6_v2",
+        pooling = Pooling.MEAN,
+        sourceCheckpoint = "sentence-transformers/all-MiniLM-L6-v2",
+        licence = "Apache-2.0"
+    ),
+    BUILTIN_LIGHTWEIGHT(
+        id = "builtin_lightweight",
+        displayName = "Built-in Lightweight (No model files)",
+        shortName = "Built-in",
+        modelName = "Hashed n-gram projection",
+        dimensions = 384,
+        accuracyRating = "Keyword-level similarity",
+        latencyLabel = "No download · instant",
+        description = "Always-available fallback that needs no model files. It matches on shared words and " +
+            "phrases, not meaning — install one of the models above for real semantic search."
+    );
+
+    val isBuiltIn: Boolean get() = directory == null
+
+    companion object {
+        /** The model chosen when nothing has been saved: the best quality/size trade-off. */
+        val DEFAULT = BGE_SMALL_EN_V15
+
+        /** Ids written by earlier app versions, mapped to their closest current model. */
+        private val LEGACY_IDS = mapOf(
+            "onnx_sentence_bert_tflite" to ALL_MINILM_L6_V2,
+            "on_device_neural_bge" to BUILTIN_LIGHTWEIGHT
+        )
+
+        fun fromId(id: String?): EmbeddingModelType? =
+            entries.firstOrNull { it.id == id } ?: LEGACY_IDS[id]
+    }
 }

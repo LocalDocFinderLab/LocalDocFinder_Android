@@ -70,8 +70,22 @@ class PageAwareChunkerTest {
         assertNull(ChunkMetadata.page(""))
         assertNull(ChunkMetadata.page("something=else"))
 
-        assertEquals("p. 3", ChunkMetadata.pageLabel("page=3"))
+        assertEquals("p. 3", ChunkMetadata.pageLabel("model=bge_small_en_v15;page=3"))
         assertEquals("pp. 3–5", ChunkMetadata.pageLabel("page=3;pageEnd=5"))
         assertNull(ChunkMetadata.pageLabel(""))
+    }
+
+    @Test
+    fun `chunk metadata carries the embedding model id next to the page`() {
+        assertEquals("model=bge_small_en_v15", ChunkMetadata.encode(modelId = "bge_small_en_v15"))
+        assertEquals("model=m;page=3;pageEnd=4", ChunkMetadata.encode(3, 4, "m"))
+        assertEquals("m", ChunkMetadata.model("model=m;page=3"))
+        assertNull(ChunkMetadata.model("page=3"))
+        assertNull(ChunkMetadata.model(""))
+
+        // Re-indexing with another model swaps the id and keeps the page info.
+        assertEquals("model=new;page=3;pageEnd=4", ChunkMetadata.withModel("model=old;page=3;pageEnd=4", "new"))
+        assertEquals("model=new", ChunkMetadata.withModel("", "new"))
+        assertEquals("model=new;page=7", ChunkMetadata.withModel("page=7", "new"))
     }
 }

@@ -13,7 +13,8 @@ import kotlinx.coroutines.flow.Flow
  */
 data class ChunkEmbeddingRow(
     val id: Long,
-    val embeddingBlob: ByteArray
+    val embeddingBlob: ByteArray,
+    val metadata: String
 )
 
 /** When a file was last indexed (its stored source timestamp) and how many chunks it currently has. */
@@ -87,8 +88,19 @@ interface DocumentChunkDao {
     @Query("SELECT * FROM documents")
     suspend fun getAllChunks(): List<DocumentChunkEntity>
 
-    @Query("SELECT id, embeddingBlob FROM documents WHERE id IN (:chunkIds)")
+    @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id IN (:chunkIds)")
     suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>
+
+    /**
+     * Number of chunks whose vector was NOT produced by [modelId] (including chunks indexed before models
+     * were tagged). Those chunks don't take part in semantic scoring until they are re-indexed.
+     * `metadata` starts with `model=<id>` followed by end-of-string or `;` (see ChunkMetadata).
+     */
+    @Query(
+        "SELECT COUNT(*) FROM documents WHERE NOT (metadata = 'model=' || :modelId " +
+            "OR substr(metadata, 1, length(:modelId) + 7) = 'model=' || :modelId || ';')"
+    )
+    fun countChunksNotIndexedWith(modelId: String): Flow<Int>
 
     @Query("SELECT MAX(timestamp) AS lastIndexed, COUNT(*) AS chunkCount FROM documents WHERE fileUri = :fileUri")
     suspend fun getFileIndexStamp(fileUri: String): FileIndexStamp
