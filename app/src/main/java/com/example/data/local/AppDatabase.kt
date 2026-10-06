@@ -16,14 +16,24 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DocumentTagEntity::class,
         SearchHistoryEntity::class
     ],
-    version = 4,
-    exportSchema = false
+    version = 5,
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun documentChunkDao(): DocumentChunkDao
     abstract fun searchHistoryDao(): SearchHistoryDao
+
+    /** Re-reads every row of `documents` into the FTS index (repair after external edits). */
+    fun rebuildFtsIndex() {
+        openHelper.writableDatabase.execSQL("INSERT INTO `documents_fts`(`documents_fts`) VALUES('rebuild')")
+    }
+
+    /** Merges FTS b-tree segments into one for faster MATCH queries; run after bulk indexing. */
+    fun optimizeFtsIndex() {
+        openHelper.writableDatabase.execSQL("INSERT INTO `documents_fts`(`documents_fts`) VALUES('optimize')")
+    }
 
     companion object {
         private const val TAG = "AppDatabase"
@@ -91,13 +101,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5: `documents_fts` becomes an external-content FTS4 table over `documents`
+         * (rowid == documents.id, no duplicated text, trigger-synced by Room). The old standalone
+         * table is dropped and the new index is populated from existing rows via `rebuild`.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `documents_fts`")
+                db.execSQL(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS `documents_fts` USING FTS4(`chunkText` TEXT NOT NULL, `fileName` TEXT NOT NULL, `fileUri` TEXT NOT NULL, `tags` TEXT NOT NULL, tokenize=unicode61, content=`documents`)"
+                )
+                db.execSQL("INSERT INTO `documents_fts`(`documents_fts`) VALUES('rebuild')")
+            }
+        }
+
         private fun createRoomBuilder(context: Context): RoomDatabase.Builder<AppDatabase> {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DB_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3, MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
         }

@@ -70,6 +70,9 @@ secrets {
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
+// Export Room schema JSON (used for migration verification and version history).
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
