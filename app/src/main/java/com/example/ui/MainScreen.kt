@@ -887,8 +887,7 @@ fun MainScreen(
                                 }
                                 context.startActivity(overlayIntent)
                             },
-                            focusRequester = searchFocusRequester,
-                            repository = viewModel.repository
+                            focusRequester = searchFocusRequester
                         )
                     }
                 }

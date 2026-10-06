@@ -125,11 +125,16 @@ fun FtsDocumentSearchComponent(
     onOpenFilterSheet: () -> Unit = {},
     onOpenGlossyOverlay: ((SearchResult) -> Unit)? = null,
     focusRequester: FocusRequester? = null,
-    repository: com.example.data.repository.DocumentRepository? = null,
     modifier: Modifier = Modifier
 ) {
     val isSearchActive = query.isNotBlank() || selectedTag != null
     var isVisualGridMode by remember { mutableStateOf(false) }
+    val hasActiveFilters = selectedFileType != null ||
+            selectedConfidenceTier != null ||
+            selectedTag != null ||
+            selectedDatePreset != DateRangePreset.ALL_TIME ||
+            startDateMillis != null ||
+            endDateMillis != null
 
     Column(modifier = modifier.fillMaxSize()) {
         // 1. Search Bar Text Field
@@ -397,6 +402,15 @@ fun FtsDocumentSearchComponent(
                     }
                 }
 
+                // Hybrid engine is still embedding the query / scanning vectors / running the FTS query
+                results.isEmpty() && isSearching -> {
+                    SearchResultsShimmer(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+
                 // Filtered out all results
                 rawResults.isNotEmpty() && results.isEmpty() -> {
                     FtsFilteredEmptyPrompt(
@@ -411,16 +425,18 @@ fun FtsDocumentSearchComponent(
                 }
 
                 // No matches found for current search query
-                results.isEmpty() && !isSearching -> {
-                    FtsNoResultsPrompt(
+                results.isEmpty() -> {
+                    SearchEmptyState(
                         query = query.ifBlank { selectedTag ?: "" },
                         searchMode = searchMode,
+                        hasActiveFilters = hasActiveFilters,
                         onSwitchToHybrid = { onSearchModeChanged(SearchMode.HYBRID) },
                         onClearFilters = {
                             onQueryChanged("")
                             onSelectTag(null)
                             onResetFilters()
-                        }
+                        },
+                        onAddDocuments = onOpenFolder
                     )
                 }
 
@@ -443,11 +459,17 @@ fun FtsDocumentSearchComponent(
                             onExpandGlossyOverlay = onOpenGlossyOverlay
                         )
                     } else {
-                        if (searchMode == SearchMode.KEYWORD && repository != null) {
+                        if (searchMode == SearchMode.KEYWORD && query.isNotBlank()) {
                             SearchResultList(
                                 query = query,
-                                repository = repository,
+                                results = results,
+                                isSearching = isSearching,
                                 onResultClick = onPreviewClick,
+                                searchMode = searchMode,
+                                hasActiveFilters = hasActiveFilters,
+                                onSwitchToHybrid = { onSearchModeChanged(SearchMode.HYBRID) },
+                                onClearFilters = onResetFilters,
+                                onAddDocuments = onOpenFolder,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
@@ -770,81 +792,6 @@ fun FtsInitialQueryPrompt(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun FtsNoResultsPrompt(
-    query: String,
-    searchMode: SearchMode,
-    onSwitchToHybrid: () -> Unit,
-    onClearFilters: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(48.dp)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "No matches found for \"$query\"",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = if (searchMode != SearchMode.HYBRID)
-                "Try switching to Hybrid mode to combine both dense vector semantics and full-text keyword matching."
-            else
-                "Try phrasing with different keywords, adjusting filters, or clearing active file type tags.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (searchMode != SearchMode.HYBRID) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onSwitchToHybrid() }
-                ) {
-                    Text(
-                        text = "Switch to Hybrid",
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onClearFilters() }
-            ) {
-                Text(
-                    text = "Clear Filters",
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }
