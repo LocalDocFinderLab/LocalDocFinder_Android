@@ -49,13 +49,16 @@ class TextExtractionService(private val context: Context) {
         } catch (t: Throwable) {
             // PDFBox can throw IOException (corrupt / password protected) but also Error subclasses on
             // pathological files (StackOverflowError, OutOfMemoryError, LinkageError). None should kill indexing.
+            if (t is OutOfMemoryError) {
+                System.gc()
+            }
             failure = "${t.javaClass.simpleName}: ${t.message}"
             Log.w(TAG, "PDFBox could not read $uri ($failure); trying built-in extractor")
         }
 
         return try {
             val fallback = PdfTextExtractor.extractDocument(context, uri)
-            val pages = fallback.pageTexts.ifEmpty { listOf(fallback.fullText) }
+            val pages = fallback.pageTexts.ifEmpty { if (fallback.fullText.isNotBlank()) listOf(fallback.fullText) else emptyList() }
                 .mapIndexed { i, text -> ExtractedPage(i + 1, PdfParserUtils.cleanPdfTextForEmbedding(text)) }
                 .filter { it.text.length >= MIN_PAGE_CHARS }
             val metadata = ExtractedMetadata(
@@ -67,6 +70,9 @@ class TextExtractionService(private val context: Context) {
             )
             ExtractedDocument(pages, metadata, FALLBACK_EXTRACTOR, error = if (pages.isEmpty()) failure ?: fallback.error else null)
         } catch (t: Throwable) {
+            if (t is OutOfMemoryError) {
+                System.gc()
+            }
             Log.w(TAG, "Built-in PDF extractor failed for $uri: ${t.message}")
             ExtractedDocument.empty(FALLBACK_EXTRACTOR, failure ?: t.message)
         }

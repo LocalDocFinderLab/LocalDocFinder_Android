@@ -17,6 +17,11 @@ class DocuVectorApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        try {
+            com.example.engine.FailedDocumentRegistry.init(this)
+        } catch (e: Throwable) {
+            Log.w("DocuVectorApp", "FailedDocumentRegistry init: ${e.message}")
+        }
         createNotificationChannel()
         com.example.updater.worker.AppUpdateCheckWorker.ensureNotificationChannel(this)
         try {
@@ -27,8 +32,9 @@ class DocuVectorApp : Application(), Configuration.Provider {
             Log.w("DocuVectorApp", "Indexing power policy unavailable: ${e.message}")
         }
         try {
-            // Background indexing stays off if the user stopped it; "Start indexing" re-schedules it.
-            if (!com.example.worker.IndexingController.isStoppedByUser(this)) {
+            // Background indexing stays off if the user stopped it or safe mode is active
+            if (!com.example.worker.IndexingController.isStoppedByUser(this) &&
+                !com.example.engine.FailedDocumentRegistry.isSafeModeActive(this)) {
                 com.example.worker.ContinuousSyncWorker.scheduleContinuousSync(this)
                 com.example.worker.FolderMonitorWorker.schedulePeriodicMonitor(this)
             }

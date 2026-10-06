@@ -254,7 +254,9 @@ class OnDeviceEmbeddingEngine(
 
         // Delegate Fallback Pipeline:
         // 0. On Google Pixel Tensor devices: Target Google EdgeTPU / NNAPI Delegate
-        if (pixelOptimizer.currentProfile.value.isGoogleTensorSoc || isPixelDevice()) {
+        // Only Google Tensor SoCs (Pixel 6+, gs101, gs201, zuma, etc.) possess the EdgeTPU.
+        // Legacy Pixels (e.g. Pixel 3a, 4, 5) run on Qualcomm Snapdragon and use GPU / CPU XNNPACK.
+        if (pixelOptimizer.currentProfile.value.isGoogleTensorSoc) {
             try {
                 val nnapiOptionsClass = Class.forName("org.tensorflow.lite.nnapi.NnApiDelegate\$Options")
                 val nnapiOptions = nnapiOptionsClass.getDeclaredConstructor().newInstance()

@@ -71,6 +71,31 @@ object PdfTextExtractor {
      */
     fun extractDocument(context: Context, uri: Uri): ExtractionResult {
         return try {
+            val fileSize = try {
+                if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
+                    File(uri.path ?: uri.toString().removePrefix("file://")).length()
+                } else {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+                }
+            } catch (_: Throwable) { 0L }
+
+            // Guard against massive files blowing up memory in byte buffer
+            if (fileSize > 25L * 1024 * 1024) {
+                Log.w(TAG, "PDF is very large (${fileSize / (1024 * 1024)} MB). Using PdfRenderer fallback to prevent OOM.")
+                val rendererText = extractTextUsingPdfRenderer(context, uri)
+                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "Large PDF"
+                return if (rendererText.isNotBlank()) {
+                    ExtractionResult(
+                        fullText = rendererText,
+                        pageTexts = listOf(rendererText),
+                        metadata = PdfMetadata(title = filename, pageCount = 1),
+                        isSuccess = true
+                    )
+                } else {
+                    ExtractionResult("", emptyList(), PdfMetadata(), false, "File exceeds 25MB in-memory scan limit")
+                }
+            }
+
             val bytes = if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
                 val path = uri.path ?: uri.toString().removePrefix("file://")
                 File(path).readBytes()
@@ -80,6 +105,10 @@ object PdfTextExtractor {
             }
             val res = extractFromBytes(bytes)
             if (res.fullText.isNotBlank()) {
+                return res
+            }
+
+            if (!res.isSuccess && (res.error == "Missing %PDF header" || res.error == "File too small to be a PDF")) {
                 return res
             }
 
@@ -96,9 +125,12 @@ object PdfTextExtractor {
             }
 
             res
-        } catch (e: Exception) {
-            Log.e(TAG, "Error extracting text from PDF: ${e.message}", e)
-            ExtractionResult("", emptyList(), PdfMetadata(), false, e.localizedMessage)
+        } catch (t: Throwable) {
+            if (t is OutOfMemoryError) {
+                System.gc()
+            }
+            Log.e(TAG, "Error extracting text from PDF: ${t.message}", t)
+            ExtractionResult("", emptyList(), PdfMetadata(), false, t.localizedMessage ?: t.javaClass.simpleName)
         }
     }
 
@@ -194,7 +226,11 @@ object PdfTextExtractor {
 
         var i = 0
         val maxLen = bytes.size - 10
-        while (i < maxLen) {
+        var totalDecompressedBytes = 0
+        val maxDecompressedBytes = 6 * 1024 * 1024
+        val maxStreamsCount = 40
+
+        while (i < maxLen && result.size < maxStreamsCount && totalDecompressedBytes < maxDecompressedBytes) {
             if (matchBytes(bytes, i, streamKeyword)) {
                 var streamStart = i + streamKeyword.size
                 if (streamStart < bytes.size && bytes[streamStart] == '\r'.code.toByte()) streamStart++
@@ -207,26 +243,35 @@ object PdfTextExtractor {
                     if (streamEnd > streamStart && bytes[streamEnd - 1] == '\r'.code.toByte()) streamEnd--
 
                     val len = streamEnd - streamStart
-                    if (len in 4..5_000_000) {
-                        val slice = bytes.copyOfRange(streamStart, streamEnd)
-                        val decompressed = decompressFlate(slice) ?: slice
-                        if (decompressed.isNotEmpty()) {
-                            // Check if this decompressed stream is an Object Stream (/ObjStm)
-                            val objStmContent = String(decompressed, Charsets.ISO_8859_1)
-                            if (objStmContent.contains("Tj") || objStmContent.contains("TJ") || objStmContent.contains("(")) {
-                                result.add(decompressed)
-                            } else {
-                                // Try parsing nested stream patterns inside decompressed object streams
-                                val innerStreams = parseInnerObjectStreamText(decompressed)
-                                if (innerStreams.isNotEmpty()) {
-                                    result.addAll(innerStreams)
-                                } else {
+                    if (len in 4..1_500_000) {
+                        try {
+                            val slice = bytes.copyOfRange(streamStart, streamEnd)
+                            val decompressed = decompressFlate(slice)
+                            if (decompressed != null && decompressed.isNotEmpty()) {
+                                val probe = String(decompressed, 0, minOf(decompressed.size, 512), Charsets.ISO_8859_1)
+                                if (probe.contains("Tj") || probe.contains("TJ") || probe.contains("BT") || probe.contains("(")) {
                                     result.add(decompressed)
+                                    totalDecompressedBytes += decompressed.size
+                                } else {
+                                    val innerStreams = parseInnerObjectStreamText(decompressed)
+                                    if (innerStreams.isNotEmpty()) {
+                                        result.addAll(innerStreams)
+                                        totalDecompressedBytes += innerStreams.sumOf { it.size }
+                                    }
                                 }
+                            }
+                        } catch (t: Throwable) {
+                            if (t is OutOfMemoryError) {
+                                System.gc()
+                                break
                             }
                         }
                     }
                     i = endIdx + endstreamKeyword.size
+                    continue
+                } else {
+                    // endstream not found: skip past current keyword to prevent quadratic scanning
+                    i += streamKeyword.size + 128
                     continue
                 }
             }
@@ -752,6 +797,10 @@ object PdfTextExtractor {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return ""
             pfd.use { descriptor ->
                 val renderer = PdfRenderer(descriptor)
+                if (renderer.pageCount <= 0) {
+                    renderer.close()
+                    return ""
+                }
                 val pageCount = minOf(renderer.pageCount, 10)
                 val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "PDF Document"
                 val sb = StringBuilder()

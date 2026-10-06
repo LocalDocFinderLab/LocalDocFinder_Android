@@ -92,6 +92,7 @@ dependencies {
   implementation(libs.pdfbox.android)
   implementation(libs.tensorflow.lite)
   implementation(libs.tensorflow.lite.gpu)
+  implementation(libs.tensorflow.lite.gpu.api)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.kotlinx.coroutines.android)

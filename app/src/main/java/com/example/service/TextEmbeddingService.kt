@@ -174,8 +174,8 @@ class TextEmbeddingService : Service() {
             setUseXNNPACK(true)
         }
 
-        // 1. Check for Pixel Tensor TPU / NNAPI acceleration
-        if (isPixelDevice()) {
+        // 1. Check for Pixel Tensor TPU / NNAPI acceleration (Tensor SoCs only)
+        if (isPixelTensorDevice()) {
             try {
                 val nnapiOptionsClass = Class.forName("org.tensorflow.lite.nnapi.NnApiDelegate\$Options")
                 val nnapiOptions = nnapiOptionsClass.getDeclaredConstructor().newInstance()
@@ -423,6 +423,21 @@ class TextEmbeddingService : Service() {
         val out = FloatArray(vec.size)
         for (i in vec.indices) out[i] = vec[i] / norm
         return out
+    }
+
+    private fun isPixelTensorDevice(): Boolean {
+        if (isEmulatorOrHeadlessEnvironment()) return false
+        val h = android.os.Build.HARDWARE.lowercase()
+        val b = android.os.Build.BOARD.lowercase()
+        val soc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            android.os.Build.SOC_MODEL.lowercase()
+        } else ""
+        val model = android.os.Build.MODEL.lowercase()
+        return h.contains("tensor") || h.contains("zuma") || h.contains("whitechapel") ||
+                h.contains("gs101") || h.contains("gs201") || h.contains("laguna") ||
+                b.contains("cloudripper") || soc.contains("zuma") || soc.contains("gs") ||
+                model.contains("pixel 6") || model.contains("pixel 7") || model.contains("pixel 8") ||
+                model.contains("pixel 9") || model.contains("pixel fold") || model.contains("pixel tablet")
     }
 
     private fun isPixelDevice(): Boolean {

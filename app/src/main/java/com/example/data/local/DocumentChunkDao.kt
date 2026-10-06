@@ -79,6 +79,19 @@ interface DocumentChunkDao {
     @Query("UPDATE documents SET tags = :tags WHERE fileUri = :fileUri")
     suspend fun updateChunkTagsForFile(fileUri: String, tags: String)
 
+    @Transaction
+    suspend fun setTagsForFile(fileUri: String, tags: List<String>) {
+        deleteTagsForFile(fileUri)
+        if (tags.isNotEmpty()) {
+            val entities = tags.map { DocumentTagEntity(fileUri = fileUri, tag = it.trim()) }
+            insertTags(entities)
+            val joined = tags.joinToString(" ") { it.trim() }
+            updateChunkTagsForFile(fileUri, joined)
+        } else {
+            updateChunkTagsForFile(fileUri, "")
+        }
+    }
+
     @Query("SELECT * FROM documents WHERE hash = :hash LIMIT 1")
     suspend fun getChunkByHash(hash: String): DocumentChunkEntity?
 

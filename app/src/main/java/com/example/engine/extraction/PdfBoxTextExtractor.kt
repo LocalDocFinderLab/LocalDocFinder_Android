@@ -24,8 +24,9 @@ internal object PdfBoxTextExtractor {
     /** PDFBox keeps this much of the file in RAM and spills the rest to a temp file. */
     private const val MAIN_MEMORY_BYTES = 16L * 1024 * 1024
 
-    const val DEFAULT_MAX_PAGES = 5_000
-    const val DEFAULT_MAX_CHARS = 8_000_000
+    const val DEFAULT_MAX_PAGES = 300
+    const val DEFAULT_MAX_CHARS = 1_000_000
+    private const val MAX_EXTRACTION_TIME_MS = 40_000L
 
     @Volatile
     private var initialised = false
@@ -74,9 +75,10 @@ internal object PdfBoxTextExtractor {
             var chars = 0
             var truncated = totalPages > maxPages
             val lastPage = minOf(totalPages, maxPages)
+            val startTime = System.currentTimeMillis()
 
             for (pageNumber in 1..lastPage) {
-                if (!keepGoing() || chars >= maxChars) {
+                if (!keepGoing() || chars >= maxChars || (System.currentTimeMillis() - startTime) > MAX_EXTRACTION_TIME_MS) {
                     truncated = true
                     break
                 }
@@ -84,8 +86,11 @@ internal object PdfBoxTextExtractor {
                     stripper.setStartPage(pageNumber)
                     stripper.setEndPage(pageNumber)
                     stripper.getText(doc)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Skipping unreadable page $pageNumber: ${e.message}")
+                } catch (t: Throwable) {
+                    if (t is OutOfMemoryError) {
+                        System.gc()
+                    }
+                    Log.w(TAG, "Skipping unreadable page $pageNumber: ${t.message}")
                     ""
                 }
                 if (text.isNotBlank()) {
