@@ -172,12 +172,12 @@ class DocumentRepository(
         }
 
         if (chunksToEmbed.isNotEmpty()) {
-            val batchSize = com.example.engine.OnDeviceEmbeddingEngine.DEFAULT_BATCH_SIZE
-            val totalBatches = (chunksToEmbed.size + batchSize - 1) / batchSize
-
-            for (b in 0 until totalBatches) {
+            var start = 0
+            while (start < chunksToEmbed.size) {
                 com.example.engine.HardwareMonitor.checkPausePoint()
-                val start = b * batchSize
+                // Batch size follows the live power policy: large while charging & idle, small when the
+                // user is active or the device is hot.
+                val batchSize = com.example.engine.IndexingPowerPolicy.current().batchSize.coerceAtLeast(1)
                 val end = minOf(start + batchSize, chunksToEmbed.size)
                 val batchChunks = chunksToEmbed.subList(start, end)
 
@@ -213,6 +213,7 @@ class DocumentRepository(
                         )
                     )
                 }
+                start = end
             }
         }
 

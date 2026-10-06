@@ -314,6 +314,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val hardwareMetrics: StateFlow<com.example.engine.HardwareMetrics> = com.example.engine.HardwareMonitor.metrics
     val isGamingModePaused: StateFlow<Boolean> = com.example.engine.HardwareMonitor.isIndexingPaused
+    val indexingSpeed: StateFlow<com.example.engine.IndexingPowerPolicy.Speed> = com.example.engine.IndexingPowerPolicy.speed
     val chatIndexingProgress: StateFlow<com.example.service.ChatIndexingProgress> = com.example.service.ChatBackupIndexingService.serviceProgress
 
     private val _selectedTag = MutableStateFlow<String?>(null)

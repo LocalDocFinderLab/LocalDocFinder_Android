@@ -12,8 +12,15 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.DocuVectorApp
 import com.example.data.repository.DocumentRepository
+import com.example.engine.IndexingPowerPolicy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 
 class DocumentIndexWorker(
     private val context: Context,
@@ -71,33 +78,10 @@ class DocumentIndexWorker(
                     )
                 }
 
-                files.forEachIndexed { index, docFile ->
-                    if (isStopped) return@withContext Result.failure()
-                    val fileName = docFile.name ?: "Document"
-                    val basePercent = ((index.toFloat() / files.size.toFloat()) * 100).toInt()
-
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val currentPercent = (basePercent + (subFactor / files.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-                        val title = "Entire System: ${index + 1}/${files.size} ($currentPercent%)"
-                        val content = "$fileName • $step"
-                        setForegroundAsync(createForegroundInfo(currentPercent, title, content))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to index + 1,
-                                KEY_PROGRESS_TOTAL to files.size,
-                                KEY_PROGRESS_PERCENT to currentPercent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
-                    }
-                    if (result.isSuccess) {
-                        totalIndexedChunks += result.chunksIndexed
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                }
+                val outcome = indexFilesAdaptive(files) { ordinal, total, percent -> "Entire System: $ordinal/$total ($percent%)" }
+                if (outcome.stopped) return@withContext Result.failure()
+                totalIndexedChunks += outcome.chunks
+                failures.addAll(outcome.failures)
             } else if (shouldIndex100Samples) {
                 // If seeded files in getExternalFilesDir exist, prioritize indexing those
                 val externalFilesDir = context.getExternalFilesDir(null)
@@ -181,33 +165,10 @@ class DocumentIndexWorker(
                     )
                 }
 
-                files.forEachIndexed { index, docFile ->
-                    if (isStopped) return@withContext Result.failure()
-                    val fileName = docFile.name ?: "Document"
-                    val basePercent = ((index.toFloat() / files.size.toFloat()) * 100).toInt()
-
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val currentPercent = (basePercent + (subFactor / files.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-                        val title = "Downloads: ${index + 1}/${files.size} ($currentPercent%)"
-                        val content = "$fileName • $step"
-                        setForegroundAsync(createForegroundInfo(currentPercent, title, content))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to index + 1,
-                                KEY_PROGRESS_TOTAL to files.size,
-                                KEY_PROGRESS_PERCENT to currentPercent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
-                    }
-                    if (result.isSuccess) {
-                        totalIndexedChunks += result.chunksIndexed
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                }
+                val outcome = indexFilesAdaptive(files) { ordinal, total, percent -> "Downloads: $ordinal/$total ($percent%)" }
+                if (outcome.stopped) return@withContext Result.failure()
+                totalIndexedChunks += outcome.chunks
+                failures.addAll(outcome.failures)
             } else if (shouldIndexAndroid) {
                 // Direct Scan of Android Folder: Bypasses Android 11+ SAF folder restriction for /Android
                 setForegroundAsync(createForegroundInfo(5, "Scanning Android folder…", "Searching documents, media & files"))
@@ -223,33 +184,10 @@ class DocumentIndexWorker(
                     )
                 }
 
-                files.forEachIndexed { index, docFile ->
-                    if (isStopped) return@withContext Result.failure()
-                    val fileName = docFile.name ?: "Document"
-                    val basePercent = ((index.toFloat() / files.size.toFloat()) * 100).toInt()
-
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val currentPercent = (basePercent + (subFactor / files.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-                        val title = "Android Folder: ${index + 1}/${files.size} ($currentPercent%)"
-                        val content = "$fileName • $step"
-                        setForegroundAsync(createForegroundInfo(currentPercent, title, content))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to index + 1,
-                                KEY_PROGRESS_TOTAL to files.size,
-                                KEY_PROGRESS_PERCENT to currentPercent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
-                    }
-                    if (result.isSuccess) {
-                        totalIndexedChunks += result.chunksIndexed
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                }
+                val outcome = indexFilesAdaptive(files) { ordinal, total, percent -> "Android Folder: $ordinal/$total ($percent%)" }
+                if (outcome.stopped) return@withContext Result.failure()
+                totalIndexedChunks += outcome.chunks
+                failures.addAll(outcome.failures)
             } else if (fileUriStrings != null && fileUriStrings.isNotEmpty()) {
                 // Multi-Document Pick mode: Indexes exact files picked by the user
                 setForegroundAsync(createForegroundInfo(5, "Processing selected files…", "${fileUriStrings.size} files queued"))
@@ -257,33 +195,10 @@ class DocumentIndexWorker(
                     androidx.documentfile.provider.DocumentFile.fromSingleUri(context, Uri.parse(it))
                 }
 
-                files.forEachIndexed { index, docFile ->
-                    if (isStopped) return@withContext Result.failure()
-                    val fileName = docFile.name ?: "Document"
-                    val basePercent = ((index.toFloat() / files.size.toFloat()) * 100).toInt()
-
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val currentPercent = (basePercent + (subFactor / files.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-                        val title = "Selected File ${index + 1} of ${files.size} ($currentPercent%)"
-                        val content = "$fileName • $step"
-                        setForegroundAsync(createForegroundInfo(currentPercent, title, content))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to index + 1,
-                                KEY_PROGRESS_TOTAL to files.size,
-                                KEY_PROGRESS_PERCENT to currentPercent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
-                    }
-                    if (result.isSuccess) {
-                        totalIndexedChunks += result.chunksIndexed
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                }
+                val outcome = indexFilesAdaptive(files) { ordinal, total, percent -> "Selected File $ordinal of $total ($percent%)" }
+                if (outcome.stopped) return@withContext Result.failure()
+                totalIndexedChunks += outcome.chunks
+                failures.addAll(outcome.failures)
             } else if (!treeUriStr.isNullOrEmpty()) {
                 val treeUri = Uri.parse(treeUriStr)
                 setForegroundAsync(createForegroundInfo(5, "Scanning directory tree…", "Discovering supported documents"))
@@ -300,39 +215,10 @@ class DocumentIndexWorker(
                     )
                 }
 
-                files.forEachIndexed { index, docFile ->
-                    if (isStopped) {
-                        return@withContext Result.failure()
-                    }
-
-                    val fileName = docFile.name ?: "Document"
-                    val basePercent = ((index.toFloat() / files.size.toFloat()) * 100).toInt()
-
-                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
-                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
-                        val currentPercent = (basePercent + (subFactor / files.size.toFloat() * 100)).toInt().coerceIn(0, 99)
-
-                        val title = "Processing File ${index + 1} of ${files.size} ($currentPercent%)"
-                        val content = "$fileName • $step"
-
-                        setForegroundAsync(createForegroundInfo(currentPercent, title, content))
-                        setProgressAsync(
-                            workDataOf(
-                                KEY_PROGRESS_CURRENT to index + 1,
-                                KEY_PROGRESS_TOTAL to files.size,
-                                KEY_PROGRESS_PERCENT to currentPercent,
-                                KEY_CURRENT_FILE to fileName,
-                                KEY_CURRENT_PHASE to step
-                            )
-                        )
-                    }
-
-                    if (result.isSuccess) {
-                        totalIndexedChunks += result.chunksIndexed
-                    } else {
-                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
-                    }
-                }
+                val outcome = indexFilesAdaptive(files) { ordinal, total, percent -> "Processing File $ordinal of $total ($percent%)" }
+                if (outcome.stopped) return@withContext Result.failure()
+                totalIndexedChunks += outcome.chunks
+                failures.addAll(outcome.failures)
             }
 
             val errorSummary = if (failures.isNotEmpty()) failures.joinToString("\n") else null
@@ -359,6 +245,73 @@ class DocumentIndexWorker(
         }
     }
 
+    private class FileIndexOutcome(
+        val chunks: Int,
+        val failures: List<String>,
+        val stopped: Boolean
+    )
+
+    /**
+     * Indexes [files] with a small worker pool. Slot 0 always runs; extra slots only pick up files while
+     * [IndexingPowerPolicy] grants parallelism (charging & idle), so the moment the user picks up the
+     * phone or it is unplugged, indexing falls back to a single gentle worker.
+     */
+    private suspend fun indexFilesAdaptive(
+        files: List<androidx.documentfile.provider.DocumentFile>,
+        title: (ordinal: Int, total: Int, percent: Int) -> String
+    ): FileIndexOutcome = coroutineScope {
+        val total = files.size
+        val nextIndex = AtomicInteger(0)
+        val completed = AtomicInteger(0)
+        val chunks = AtomicInteger(0)
+        val failures = Collections.synchronizedList(mutableListOf<String>())
+
+        val workers = (0 until IndexingPowerPolicy.MAX_PARALLEL_FILES).map { slot ->
+            async {
+                while (true) {
+                    if (isStopped) return@async
+                    if (slot > 0) {
+                        if (nextIndex.get() >= total) return@async
+                        if (IndexingPowerPolicy.current().parallelFiles <= slot) {
+                            delay(1000)
+                            continue
+                        }
+                    }
+                    val index = nextIndex.getAndIncrement()
+                    if (index >= total) return@async
+
+                    val docFile = files[index]
+                    val fileName = docFile.name ?: "Document"
+                    val result = repository.indexDocumentSafely(docFile) { step, cur, tot ->
+                        val subFactor = if (tot > 0) cur.toFloat() / tot.toFloat() else 0f
+                        val done = completed.get()
+                        val percent = (((done + subFactor) / total.toFloat()) * 100).toInt().coerceIn(0, 99)
+                        val ordinal = (done + 1).coerceAtMost(total)
+                        setForegroundAsync(createForegroundInfo(percent, title(ordinal, total, percent), "$fileName • $step"))
+                        setProgressAsync(
+                            workDataOf(
+                                KEY_PROGRESS_CURRENT to ordinal,
+                                KEY_PROGRESS_TOTAL to total,
+                                KEY_PROGRESS_PERCENT to percent,
+                                KEY_CURRENT_FILE to fileName,
+                                KEY_CURRENT_PHASE to step
+                            )
+                        )
+                    }
+                    if (result.isSuccess) {
+                        chunks.addAndGet(result.chunksIndexed)
+                    } else {
+                        failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
+                    }
+                    completed.incrementAndGet()
+                }
+            }
+        }
+        workers.awaitAll()
+
+        FileIndexOutcome(chunks.get(), failures.toList(), isStopped)
+    }
+
     override suspend fun getForegroundInfo(): ForegroundInfo {
         return createForegroundInfo(0, "DocuVector Offline Indexer", "Preparing document indexer…")
     }
@@ -377,10 +330,16 @@ class DocumentIndexWorker(
         }
     }
 
+    /** Appends the live indexing speed (Turbo / Slowed to N% / Paused) to a notification line. */
+    private fun withSpeed(message: String): String {
+        val speed = IndexingPowerPolicy.current()
+        return "$message • ${speed.summary()}"
+    }
+
     private fun buildNotification(title: String, message: String, progress: Int): Notification {
         val builder = NotificationCompat.Builder(context, DocuVectorApp.CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText(message)
+            .setContentText(withSpeed(message))
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

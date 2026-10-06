@@ -176,6 +176,7 @@ fun MainScreen(
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
     val hardwareMetrics by viewModel.hardwareMetrics.collectAsStateWithLifecycle()
+    val indexingSpeed by viewModel.indexingSpeed.collectAsStateWithLifecycle()
     val isGamingModePaused by viewModel.isGamingModePaused.collectAsStateWithLifecycle()
     val includeChatBackups by viewModel.includeChatBackups.collectAsStateWithLifecycle()
     val chatIndexingProgress by viewModel.chatIndexingProgress.collectAsStateWithLifecycle()
@@ -773,7 +774,8 @@ fun MainScreen(
                             totalChunks = totalChunks,
                             indexingState = indexingState,
                             onStopIndexingClick = { viewModel.stopIndexing() },
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            speed = indexingSpeed
                         )
 
                         // In-App Software Update Announcement Banner
