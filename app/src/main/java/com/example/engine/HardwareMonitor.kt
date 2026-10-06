@@ -90,6 +90,7 @@ object HardwareMonitor {
 
     fun setIndexingPaused(paused: Boolean) {
         isIndexingPaused.value = paused
+        IndexingPowerPolicy.setUserPaused(paused)
         _metrics.value = _metrics.value.copy(isGamingModePaused = paused)
     }
 

@@ -62,7 +62,8 @@ fun IndexingStatusCard(
     onStartIndexingClick: (() -> Unit)? = null,
     autoScanEnabled: Boolean = true,
     onToggleAutoScan: ((Boolean) -> Unit)? = null,
-    lastScanMessage: String? = null
+    lastScanMessage: String? = null,
+    speed: com.example.engine.IndexingPowerPolicy.Speed? = null
 ) {
     Card(
         modifier = modifier
@@ -221,6 +222,12 @@ fun IndexingStatusCard(
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
+
+                        // Speed bar: appears whenever indexing is slowed (or a Turbo line at full speed)
+                        if (speed != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            IndexingSpeedBar(speed = speed)
+                        }
 
                         Spacer(modifier = Modifier.height(6.dp))
 
