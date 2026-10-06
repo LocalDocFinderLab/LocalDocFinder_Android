@@ -312,7 +312,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Model Management State
     val activeEmbeddingModel: StateFlow<com.example.engine.model.EmbeddingModelType> = repository.modelManager.activeModel
-    val isGeminiConfigured: StateFlow<Boolean> = MutableStateFlow(repository.modelManager.isGeminiConfigured()).asStateFlow()
 
     private val _isReindexingModel = MutableStateFlow(false)
     val isReindexingModel: StateFlow<Boolean> = _isReindexingModel.asStateFlow()

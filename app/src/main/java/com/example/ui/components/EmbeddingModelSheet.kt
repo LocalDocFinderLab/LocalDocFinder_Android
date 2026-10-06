@@ -23,13 +23,10 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -67,7 +64,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun EmbeddingModelSheet(
     activeModel: EmbeddingModelType,
-    isGeminiConfigured: Boolean,
     isReindexing: Boolean,
     reindexingProgress: Float,
     reindexingStatus: String,
@@ -87,67 +83,6 @@ fun EmbeddingModelSheet(
     var testResultSimB by remember { mutableStateOf<Float?>(null) }
     var testLatency by remember { mutableStateOf<Long?>(null) }
     var isTestingBenchmark by remember { mutableStateOf(false) }
-    var pendingCloudModel by remember { mutableStateOf<EmbeddingModelType?>(null) }
-
-    if (pendingCloudModel != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { pendingCloudModel = null },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = Color(0xFFF59E0B),
-                    modifier = Modifier.size(28.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "Cloud Privacy Warning",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "You are about to switch to a Cloud AI Model (${pendingCloudModel?.shortName}).",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "⚠️ This will transmit your document text chunks and search queries to Google's Cloud API for embedding generation. Your data will no longer be stored exclusively on-device.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val m = pendingCloudModel
-                        pendingCloudModel = null
-                        if (m != null) {
-                            onSelectModel(m)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                ) {
-                    Text("Proceed to Cloud")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { pendingCloudModel = null }
-                ) {
-                    Text("Stay 100% Offline")
-                }
-            }
-        )
-    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -202,38 +137,35 @@ fun EmbeddingModelSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // API Key Status Banner
+            // Privacy banner: every model runs on the phone
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (isGeminiConfigured) Color(0xFF10B981).copy(alpha = 0.12f) else Color(0xFFF59E0B).copy(alpha = 0.12f),
+                color = Color(0xFF10B981).copy(alpha = 0.12f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = if (isGeminiConfigured) Icons.Default.CheckCircle else Icons.Default.Key,
-                            contentDescription = null,
-                            tint = if (isGeminiConfigured) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            modifier = Modifier.size(20.dp)
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "100% On-Device & Private",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = if (isGeminiConfigured) "Gemini AI Key Active" else "Gemini Key Unconfigured (Secrets Panel)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isGeminiConfigured) Color(0xFF10B981) else Color(0xFFF59E0B)
-                            )
-                            Text(
-                                text = if (isGeminiConfigured) "Cloud SOTA embeddings enabled" else "Set GEMINI_API_KEY in AI Studio Secrets to unlock SOTA Cloud AI",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "Your documents and searches never leave this phone.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -252,7 +184,6 @@ fun EmbeddingModelSheet(
             // Model Selection Cards
             EmbeddingModelType.entries.forEach { model ->
                 val isSelected = activeModel == model
-                val isDisabled = model.requiresApiKey && !isGeminiConfigured
 
                 Surface(
                     modifier = Modifier
@@ -264,13 +195,7 @@ fun EmbeddingModelSheet(
                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
                             shape = RoundedCornerShape(16.dp)
                         )
-                        .clickable {
-                            if (model.isCloud) {
-                                pendingCloudModel = model
-                            } else {
-                                onSelectModel(model)
-                            }
-                        }
+                        .clickable { onSelectModel(model) }
                         .testTag("model_card_${model.id}"),
                     color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                 ) {
@@ -284,7 +209,7 @@ fun EmbeddingModelSheet(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = if (model.isCloud) Icons.Default.Cloud else Icons.Default.Memory,
+                                    imageVector = Icons.Default.Memory,
                                     contentDescription = null,
                                     tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
@@ -370,16 +295,6 @@ fun EmbeddingModelSheet(
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
-                        }
-
-                        if (isDisabled) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "⚠️ Requires Gemini API Key in Secrets panel (will fallback to on-device)",
-                                fontSize = 11.sp,
-                                color = Color(0xFFF59E0B),
-                                fontWeight = FontWeight.SemiBold
-                            )
                         }
                     }
                 }

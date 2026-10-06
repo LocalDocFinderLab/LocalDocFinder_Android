@@ -192,7 +192,6 @@ fun MainScreen(
 
     // Model Management
     val activeEmbeddingModel by viewModel.activeEmbeddingModel.collectAsStateWithLifecycle()
-    val isGeminiConfigured by viewModel.isGeminiConfigured.collectAsStateWithLifecycle()
     val isReindexingModel by viewModel.isReindexingModel.collectAsStateWithLifecycle()
     val reindexingModelProgress by viewModel.reindexingModelProgress.collectAsStateWithLifecycle()
     val reindexingModelStatus by viewModel.reindexingModelStatus.collectAsStateWithLifecycle()
@@ -1104,7 +1103,6 @@ fun MainScreen(
         val modelSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         com.example.ui.components.EmbeddingModelSheet(
             activeModel = activeEmbeddingModel,
-            isGeminiConfigured = isGeminiConfigured,
             isReindexing = isReindexingModel,
             reindexingProgress = reindexingModelProgress,
             reindexingStatus = reindexingModelStatus,

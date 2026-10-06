@@ -13,9 +13,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Coordinates and manages all indexing and vector embedding models for the app.
- * Supports:
- * - Gemini Embeddings 2.0 (gemini-embedding-2-preview)
- * - Hybrid AI Smart Indexer (gemini-3.5-flash + gemini-embedding-2-preview)
+ * Every model runs fully on-device: no document text, search query or embedding ever leaves the phone.
  * - Sentence-BERT ONNX-TFLite (SOTA Local with all-MiniLM-L6-v2)
  * - On-Device BGE Neural Engine (hardware accelerated with Pixel EdgeTPU / QNN / GPU / XNNPACK)
  */
@@ -29,8 +27,6 @@ class UnifiedEmbeddingManager(
         private const val PREFS_NAME = "docuvector_model_prefs"
         private const val KEY_ACTIVE_MODEL = "active_model_id"
     }
-
-    val geminiService = GeminiEmbeddingService()
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -46,8 +42,6 @@ class UnifiedEmbeddingManager(
     private val _reindexingStatus = MutableStateFlow("")
     val reindexingStatus: StateFlow<String> = _reindexingStatus.asStateFlow()
 
-    fun isGeminiConfigured(): Boolean = geminiService.isApiKeyAvailable()
-
     fun getActiveModel(): EmbeddingModelType = _activeModel.value
 
     fun setActiveModel(model: EmbeddingModelType) {
@@ -58,12 +52,8 @@ class UnifiedEmbeddingManager(
 
     private fun loadSavedModel(): EmbeddingModelType {
         val savedId = prefs.getString(KEY_ACTIVE_MODEL, null)
-        val defaultModel = if (geminiService.isApiKeyAvailable()) {
-            EmbeddingModelType.GEMINI_EMBEDDING_2
-        } else {
-            EmbeddingModelType.ONNX_SENTENCE_BERT_TFLITE
-        }
-        return EmbeddingModelType.entries.firstOrNull { it.id == savedId } ?: defaultModel
+        return EmbeddingModelType.entries.firstOrNull { it.id == savedId }
+            ?: EmbeddingModelType.ONNX_SENTENCE_BERT_TFLITE
     }
 
     /**
@@ -75,16 +65,6 @@ class UnifiedEmbeddingManager(
         isQuery: Boolean = false
     ): FloatArray = withContext(Dispatchers.Default) {
         val current = _activeModel.value
-        if ((current == EmbeddingModelType.GEMINI_EMBEDDING_2 || current == EmbeddingModelType.HYBRID_AI_ENRICHED) &&
-            geminiService.isApiKeyAvailable()
-        ) {
-            val geminiVec = geminiService.embedText(text, isQuery = isQuery, outputDimension = current.dimensions)
-            if (geminiVec != null && geminiVec.isNotEmpty()) {
-                return@withContext geminiVec
-            }
-            Log.d(TAG, "Gemini embedding API unavailable, smoothly falling back to Sentence-BERT Engine")
-        }
-
         if (current == EmbeddingModelType.ONNX_SENTENCE_BERT_TFLITE) {
             return@withContext sentenceBertEngine.embedText(text)
         }
@@ -104,35 +84,11 @@ class UnifiedEmbeddingManager(
         if (texts.isEmpty()) return@withContext emptyList()
         val current = _activeModel.value
 
-        if ((current == EmbeddingModelType.GEMINI_EMBEDDING_2 || current == EmbeddingModelType.HYBRID_AI_ENRICHED) &&
-            geminiService.isApiKeyAvailable()
-        ) {
-            val geminiBatch = geminiService.embedBatch(texts, isQuery = isQuery, outputDimension = current.dimensions)
-            if (geminiBatch != null && geminiBatch.size == texts.size) {
-                return@withContext geminiBatch
-            }
-            Log.d(TAG, "Gemini batch embedding API unavailable, falling back to Sentence-BERT batch engine")
-        }
-
         if (current == EmbeddingModelType.ONNX_SENTENCE_BERT_TFLITE) {
             return@withContext sentenceBertEngine.embedBatch(texts)
         }
 
         onDeviceEngine.embedBatch(texts, batchSize = batchSize)
-    }
-
-    /**
-     * Analyzes document content with Gemini Flash during indexing to extract summaries, tags, and keywords.
-     */
-    suspend fun enrichDocument(
-        fileName: String,
-        content: String
-    ): GeminiEmbeddingService.EnrichedMetadata? {
-        val current = _activeModel.value
-        if (current == EmbeddingModelType.HYBRID_AI_ENRICHED && geminiService.isApiKeyAvailable()) {
-            return geminiService.enrichDocumentContent(fileName, content)
-        }
-        return null
     }
 
     /**
@@ -145,25 +101,20 @@ class UnifiedEmbeddingManager(
         model: EmbeddingModelType = _activeModel.value
     ): Triple<Float, Float, Long> = withContext(Dispatchers.Default) {
         val start = System.currentTimeMillis()
-        val queryVec: FloatArray
-        val vecA: FloatArray
-        val vecB: FloatArray
-
-        if ((model == EmbeddingModelType.GEMINI_EMBEDDING_2 || model == EmbeddingModelType.HYBRID_AI_ENRICHED) &&
-            geminiService.isApiKeyAvailable()
-        ) {
-            queryVec = geminiService.embedText(query, isQuery = true, outputDimension = model.dimensions) ?: onDeviceEngine.embedText(query)
-            vecA = geminiService.embedText(textA, isQuery = false, outputDimension = model.dimensions) ?: onDeviceEngine.embedText(textA)
-            vecB = geminiService.embedText(textB, isQuery = false, outputDimension = model.dimensions) ?: onDeviceEngine.embedText(textB)
-        } else {
-            queryVec = onDeviceEngine.embedText(query)
-            vecA = onDeviceEngine.embedText(textA)
-            vecB = onDeviceEngine.embedText(textB)
-        }
+        val queryVec = embedWith(model, query)
+        val vecA = embedWith(model, textA)
+        val vecB = embedWith(model, textB)
 
         val simA = VectorSimilarityUtils.calculateCosineSimilarity(queryVec, vecA)
         val simB = VectorSimilarityUtils.calculateCosineSimilarity(queryVec, vecB)
         val elapsed = System.currentTimeMillis() - start
         Triple(simA, simB, elapsed)
     }
+
+    private suspend fun embedWith(model: EmbeddingModelType, text: String): FloatArray =
+        if (model == EmbeddingModelType.ONNX_SENTENCE_BERT_TFLITE) {
+            sentenceBertEngine.embedText(text)
+        } else {
+            onDeviceEngine.embedText(text)
+        }
 }
