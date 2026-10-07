@@ -382,25 +382,37 @@ fun SearchResultCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Footer: Rank breakdown & Open Action
-            Row(
+            // Footer: Rank breakdown & Action Buttons
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (result.vectorRank != null) {
-                        RankPill(label = "Vec #${result.vectorRank}", color = MaterialTheme.colorScheme.primary)
-                    }
-                    if (result.ftsRank != null) {
-                        RankPill(label = "FTS #${result.ftsRank}", color = MaterialTheme.colorScheme.secondary)
-                    }
-                    if (result.bm25Score > 0f) {
-                        RankPill(label = "BM25: %.2f".format(result.bm25Score), color = MaterialTheme.colorScheme.tertiary)
+                // Row 1: Rank breakdown pills
+                val hasRanks = result.vectorRank != null || result.ftsRank != null || result.bm25Score > 0f
+                if (hasRanks) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (result.vectorRank != null) {
+                            RankPill(label = "Vec #${result.vectorRank}", color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (result.ftsRank != null) {
+                            RankPill(label = "FTS #${result.ftsRank}", color = MaterialTheme.colorScheme.secondary)
+                        }
+                        if (result.bm25Score > 0f) {
+                            RankPill(label = "BM25: %.2f".format(result.bm25Score), color = MaterialTheme.colorScheme.tertiary)
+                        }
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Row 2: Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (onExpandGlossyOverlay != null) {
                         Surface(
                             modifier = Modifier
@@ -429,36 +441,39 @@ fun SearchResultCard(
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                     }
 
                     FilledTonalButton(
                         onClick = { onPreviewClick(result) },
                         modifier = Modifier.testTag("preview_button_${result.chunkId}"),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = ButtonDefaults.ContentPadding
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Description,
                             contentDescription = "Preview document",
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Preview", fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Preview", fontSize = 12.sp)
                     }
+
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     OutlinedButton(
                         onClick = { openDocument(context, result.fileUri) },
                         modifier = Modifier.testTag("open_button_${result.chunkId}"),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = ButtonDefaults.ContentPadding
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Launch,
                             contentDescription = "Open file",
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Open", fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Open", fontSize = 12.sp)
                     }
                 }
             }

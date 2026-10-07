@@ -368,8 +368,8 @@ fun FtsDocumentSearchComponent(
         // 3. Document Search Results List Area
         Box(modifier = Modifier.weight(1f)) {
             when {
-                // Initial State: Empty query and empty results
-                query.isBlank() && selectedTag == null && results.isEmpty() -> {
+                // Initial State: Empty query and no tag selected
+                query.isBlank() && selectedTag == null -> {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -382,7 +382,14 @@ fun FtsDocumentSearchComponent(
                                 onLoadSamplesClick = onLoadSampleClick,
                                 onPickFilesClick = onPickFilesClick
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
                         }
+
+                        // Rotating Search & Feature Tips
+                        RotatingTipsCard(
+                            onTipClick = onQueryChanged,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
 
                         if (recentSearches.isNotEmpty()) {
                             SearchHistorySection(
