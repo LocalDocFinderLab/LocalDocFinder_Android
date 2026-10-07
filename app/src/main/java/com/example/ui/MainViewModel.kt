@@ -90,6 +90,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
+    private val _selectedTag = MutableStateFlow<String?>(null)
+    val selectedTag: StateFlow<String?> = _selectedTag.asStateFlow()
+
     private val _searchMode = MutableStateFlow(SearchMode.HYBRID)
     val searchMode: StateFlow<SearchMode> = _searchMode.asStateFlow()
 
@@ -274,11 +277,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RankingConfigState())
 
     val searchResults: StateFlow<List<SearchResult>> = combine(
-        _rawSearchResults,
-        filterState,
-        _selectedConfidenceTier,
-        rankingConfigState
-    ) { rawList, filter, tier, config ->
+        combine(_rawSearchResults, filterState, _selectedConfidenceTier) { raw, filter, tier -> Triple(raw, filter, tier) },
+        combine(rankingConfigState, _query, _selectedTag) { config, q, tag -> Triple(config, q, tag) }
+    ) { (rawList, filter, tier), (config, q, tag) ->
+        if (q.isBlank() && tag == null) {
+            return@combine emptyList()
+        }
         val ranked = calculateHybridRanking(rawList, config.vectorWeight, config.bm25Weight, config.mode)
         var filtered = filter.apply(ranked)
         if (tier != null) {
@@ -325,6 +329,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _modelImportStatus = MutableStateFlow<String?>(null)
     val modelImportStatus: StateFlow<String?> = _modelImportStatus.asStateFlow()
 
+    // 1-Click In-App Model Download State
+    private val _downloadingModel = MutableStateFlow<com.example.engine.model.EmbeddingModelType?>(null)
+    val downloadingModel: StateFlow<com.example.engine.model.EmbeddingModelType?> = _downloadingModel.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow(0f)
+    val downloadProgress: StateFlow<Float> = _downloadProgress.asStateFlow()
+
+    private val _downloadStatusMessage = MutableStateFlow("")
+    val downloadStatusMessage: StateFlow<String> = _downloadStatusMessage.asStateFlow()
+
+    fun downloadEmbeddingModel(model: com.example.engine.model.EmbeddingModelType) {
+        if (_downloadingModel.value != null) return
+        _downloadingModel.value = model
+        _downloadProgress.value = 0.05f
+        _downloadStatusMessage.value = "Starting download for ${model.shortName}…"
+        viewModelScope.launch {
+            try {
+                val error = repository.downloadEmbeddingModel(model) { percent, status ->
+                    _downloadProgress.value = (percent.toFloat() / 100f).coerceIn(0f, 1f)
+                    _downloadStatusMessage.value = status
+                }
+                if (error != null) {
+                    _modelImportStatus.value = "Download error: $error"
+                    _downloadStatusMessage.value = "Download failed: $error"
+                } else {
+                    _modelImportStatus.value = "${model.shortName} successfully installed and ready!"
+                    _downloadStatusMessage.value = "${model.shortName} installed!"
+                    repository.modelManager.setActiveModel(model)
+                }
+            } catch (e: Exception) {
+                _modelImportStatus.value = "Download failed: ${e.message}"
+                _downloadStatusMessage.value = "Failed: ${e.message}"
+            } finally {
+                _downloadingModel.value = null
+            }
+        }
+    }
+
     fun importEmbeddingModel(model: com.example.engine.model.EmbeddingModelType, tflite: Uri, vocab: Uri) {
         _modelImportStatus.value = "Importing ${model.shortName}…"
         viewModelScope.launch {
@@ -344,6 +386,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _modelImportStatus.value = message
     }
 
+    private var reindexJob: Job? = null
     private val _isReindexingModel = MutableStateFlow(false)
     val isReindexingModel: StateFlow<Boolean> = _isReindexingModel.asStateFlow()
 
@@ -433,9 +476,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     val chatIndexingProgress: StateFlow<com.example.service.ChatIndexingProgress> = com.example.service.ChatBackupIndexingService.serviceProgress
 
-    private val _selectedTag = MutableStateFlow<String?>(null)
-    val selectedTag: StateFlow<String?> = _selectedTag.asStateFlow()
-
     private val _isDarkTheme = MutableStateFlow<Boolean?>(null)
     val isDarkTheme: StateFlow<Boolean?> = _isDarkTheme.asStateFlow()
 
@@ -495,8 +535,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 chat is com.example.service.ChatIndexingProgress.Active ||
                 reindexing
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-
-    private var reindexJob: Job? = null
 
     val designatedMonitoredFolder: java.io.File
         get() = com.example.worker.FolderMonitorWorker.getDesignatedFolder(getApplication())
@@ -1045,6 +1083,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun indexEntireSystemStorage() {
         val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_INDEX_ENTIRE_SYSTEM to true))
+        enqueueIndexRequest(request, "document_indexing_work")
+    }
+
+    /**
+     * Indexes device storage filtered by selected file types (e.g. PDFs only, Word docs only, Markdown/Text only, etc.)
+     */
+    fun indexEntireStorageByFileTypes(fileTypes: Set<String>) {
+        if (fileTypes.isEmpty()) return
+        val exts = fileTypes.toTypedArray()
+        val request = createIndexWorkRequest(
+            workDataOf(
+                DocumentIndexWorker.KEY_INDEX_ENTIRE_SYSTEM to true,
+                DocumentIndexWorker.KEY_ALLOWED_EXTENSIONS to exts
+            )
+        )
         enqueueIndexRequest(request, "document_indexing_work")
     }
 

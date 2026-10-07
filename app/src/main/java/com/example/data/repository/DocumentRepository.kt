@@ -162,6 +162,11 @@ class DocumentRepository(
         vocab: Uri
     ): String? = withContext(Dispatchers.IO) { modelManager.importModel(model, tflite, vocab) }
 
+    suspend fun downloadEmbeddingModel(
+        model: com.example.engine.model.EmbeddingModelType,
+        onProgress: (percent: Int, status: String) -> Unit
+    ): String? = withContext(Dispatchers.IO) { modelManager.downloadModel(model, onProgress) }
+
     suspend fun removeEmbeddingModel(model: com.example.engine.model.EmbeddingModelType) =
         withContext(Dispatchers.IO) { modelManager.removeModel(model) }
 
@@ -329,6 +334,7 @@ class DocumentRepository(
                             )
                         }
                         start = end
+                        kotlinx.coroutines.yield()
                     }
                 }
 

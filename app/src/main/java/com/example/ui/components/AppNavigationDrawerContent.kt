@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LightMode
@@ -101,6 +102,7 @@ fun AppNavigationDrawerContent(
     onIndexEntireStorageClick: () -> Unit,
     onPickDocumentClick: () -> Unit,
     onPickFilesClick: () -> Unit,
+    onIndexByFileTypesClick: () -> Unit = {},
     onLoadSampleClick: () -> Unit,
     onLoad100SamplesClick: () -> Unit,
     onSeedTestDocumentsClick: () -> Unit,
@@ -520,6 +522,17 @@ fun AppNavigationDrawerContent(
                     onIndexEntireStorageClick()
                 },
                 testTag = "drawer_index_entire_storage"
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Default.FilterList,
+                title = "Index by File Types",
+                subtitle = "Choose formats (PDFs, Word docs, Markdown, Code, Images)",
+                onClick = {
+                    onCloseDrawer()
+                    onIndexByFileTypesClick()
+                },
+                testTag = "drawer_index_by_file_types"
             )
 
             DrawerMenuItem(

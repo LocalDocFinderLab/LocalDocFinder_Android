@@ -136,6 +136,8 @@ import com.example.ui.components.PixelOptimizationDialog
 import com.example.ui.components.SearchFilterBottomSheet
 import com.example.ui.components.SearchHistorySection
 import com.example.ui.components.SearchResultCard
+import com.example.ui.components.FileTypeSelectionDialog
+import com.example.ui.components.IndexingCompletionBanner
 import com.example.ui.components.getFileTypeBadgeColor
 import kotlinx.coroutines.launch
 
@@ -202,6 +204,9 @@ fun MainScreen(
     val reindexingModelProgress by viewModel.reindexingModelProgress.collectAsStateWithLifecycle()
     val reindexingModelStatus by viewModel.reindexingModelStatus.collectAsStateWithLifecycle()
     val showModelSheet by viewModel.showModelSheet.collectAsStateWithLifecycle()
+    val downloadingModel by viewModel.downloadingModel.collectAsStateWithLifecycle()
+    val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val downloadStatusMessage by viewModel.downloadStatusMessage.collectAsStateWithLifecycle()
 
     // In-App Update Flows
     val updateCheckResult by viewModel.updateCheckResult.collectAsStateWithLifecycle()
@@ -220,6 +225,24 @@ fun MainScreen(
     var showHardwareDashboard by remember { mutableStateOf(false) }
     var showChatBackupSheet by remember { mutableStateOf(false) }
     var showQuarantineDialog by remember { mutableStateOf(false) }
+    var showFileTypeDialog by remember { mutableStateOf(false) }
+    var showCompletionBanner by remember { mutableStateOf(false) }
+    var completionBannerMessage by remember { mutableStateOf("") }
+    var completionBannerChunks by remember { mutableStateOf(0) }
+    var completionBannerFailed by remember { mutableStateOf(0) }
+
+    // Observe indexing state transitions to show completion banner
+    var previousIndexingState by remember { mutableStateOf<IndexingState>(IndexingState.Idle) }
+    LaunchedEffect(indexingState) {
+        if (previousIndexingState is IndexingState.Progress && indexingState is IndexingState.Completed) {
+            val comp = indexingState as IndexingState.Completed
+            completionBannerMessage = comp.message
+            completionBannerChunks = comp.chunksCount
+            completionBannerFailed = comp.failedCount
+            showCompletionBanner = true
+        }
+        previousIndexingState = indexingState
+    }
 
     // Crash Loop & Safe Mode
     val quarantinedCount by viewModel.quarantinedCount.collectAsStateWithLifecycle()
@@ -230,6 +253,7 @@ fun MainScreen(
     var taggingFileName by remember { mutableStateOf<String?>(null) }
     var taggingCurrentTags by remember { mutableStateOf<List<String>>(emptyList()) }
     var newTagInput by remember { mutableStateOf("") }
+    var isIndexingCardUserMinimized by remember { mutableStateOf(false) }
 
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
@@ -444,6 +468,7 @@ fun MainScreen(
                     )
                 },
                 onPickFilesClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onIndexByFileTypesClick = { showFileTypeDialog = true },
                 onLoadSampleClick = {
                     viewModel.loadSampleKnowledgeBase()
                     Toast.makeText(context, "Loading sample technical papers…", Toast.LENGTH_SHORT).show()
@@ -572,7 +597,7 @@ fun MainScreen(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = if (totalChunks > 0) "$totalFiles docs • $totalChunks chunks" else "Offline Vector Search",
+                                        text = "Offline Neural Search",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -851,6 +876,15 @@ fun MainScreen(
                             }
                         }
 
+                        // Indexing Completion Notification Banner
+                        IndexingCompletionBanner(
+                            visible = showCompletionBanner,
+                            message = completionBannerMessage,
+                            chunksCount = completionBannerChunks,
+                            failedCount = completionBannerFailed,
+                            onDismiss = { showCompletionBanner = false }
+                        )
+
                         // Real-time Indexing Status Card displaying current documents & embedding progress
                         IndexingStatusCard(
                             totalFiles = totalFiles,
@@ -876,7 +910,10 @@ fun MainScreen(
                             modifier = Modifier.padding(vertical = 4.dp),
                             speed = indexingSpeed,
                             fullSpeedEnabled = fullSpeedEnabled,
-                            onToggleFullSpeed = { viewModel.setFullSpeed(it) }
+                            onToggleFullSpeed = { viewModel.setFullSpeed(it) },
+                            isMinimized = isIndexingCardUserMinimized || isSearchActive,
+                            onToggleMinimized = { isIndexingCardUserMinimized = !isIndexingCardUserMinimized },
+                            metrics = hardwareMetrics
                         )
 
                         // In-App Software Update Announcement Banner
@@ -1318,7 +1355,27 @@ fun MainScreen(
                 viewModel.benchmarkSemanticSimilarity(q, textA, textB)
             },
             onDismiss = { viewModel.setShowModelSheet(false) },
-            sheetState = modelSheetState
+            sheetState = modelSheetState,
+            downloadingModel = downloadingModel,
+            downloadProgress = downloadProgress,
+            downloadStatusMessage = downloadStatusMessage,
+            onDownloadModel = { model ->
+                viewModel.downloadEmbeddingModel(model)
+            }
+        )
+    }
+
+    // File Type Indexing Selection Dialog
+    if (showFileTypeDialog) {
+        FileTypeSelectionDialog(
+            onDismiss = { showFileTypeDialog = false },
+            onConfirmIndex = { selectedExts ->
+                viewModel.allowIndexing()
+                requestStoragePermissionsAndCrawl {
+                    viewModel.indexEntireStorageByFileTypes(selectedExts)
+                    Toast.makeText(context, "Scanning storage for ${selectedExts.size} selected file format(s)…", Toast.LENGTH_SHORT).show()
+                }
+            }
         )
     }
 
