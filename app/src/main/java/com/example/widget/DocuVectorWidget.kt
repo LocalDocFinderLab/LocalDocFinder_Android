@@ -98,21 +98,57 @@ class DocuVectorWidget : AppWidgetProvider() {
 
                 appWidgetManager.updateAppWidget(appWidgetId, views)
 
-                // Query current vector count in IO background
+                // Query live hardware and indexing status in IO background
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        val db = AppDatabase.getInstance(context)
-                        val chunksCount = db.documentChunkDao().getTotalChunksCountDirect()
-                        val filesCount = db.documentChunkDao().getTotalFilesCountDirect()
+                        val metrics = com.example.engine.HardwareMonitor.metrics.value
+                        val wm = androidx.work.WorkManager.getInstance(context)
+                        val indexWork = try {
+                            val activeWorkers = listOf(
+                                "DocumentIndexWorker",
+                                "DownloadsFileObserverWorker",
+                                "FolderMonitorWorker",
+                                "PdfSyncWorker",
+                                "document_indexing_worker"
+                            )
+                            activeWorkers.firstNotNullOfOrNull { tag ->
+                                wm.getWorkInfosByTag(tag).get().firstOrNull { it.state == androidx.work.WorkInfo.State.RUNNING }
+                            }
+                        } catch (_: Throwable) { null }
 
-                        val badgeText = if (chunksCount > 0) "$chunksCount Chunks" else "Offline"
-                        val subText = if (filesCount > 0) "$filesCount documents • Ready" else "LocalDoc Finder • Tap to search"
+                        val isIndexing = indexWork != null || com.example.engine.HardwareMonitor.isEmbeddingActive.value || metrics.isNpuActive
+
+                        val searchPrompt: String
+                        val badgeText: String
+                        val subText: String
+
+                        if (isIndexing) {
+                            val progress = indexWork?.progress
+                            val currentFile = progress?.getString("current_file") ?: progress?.getString("key_current_file")
+                            val percent = progress?.getInt("percent", progress.getInt("key_progress_percent", 0)) ?: 0
+
+                            searchPrompt = if (percent > 0) "Indexing files ($percent%)…" else "Indexing files…"
+                            badgeText = if (percent > 0) "$percent%" else "Indexing"
+                            subText = if (!currentFile.isNullOrBlank()) {
+                                "Indexing $currentFile"
+                            } else {
+                                "Processing vector embeddings • CPU ${metrics.cpuUsagePercent}%"
+                            }
+                        } else {
+                            val totalDocs = try {
+                                com.example.data.local.AppDatabase.getInstance(context).documentChunkDao().getTotalFilesCountDirect()
+                            } catch (_: Throwable) { 0 }
+                            searchPrompt = "Search local documents"
+                            badgeText = if (totalDocs > 0) "$totalDocs files" else "Ready"
+                            subText = "100% private offline neural search"
+                        }
 
                         val updatedViews = RemoteViews(context.packageName, R.layout.docuvector_widget).apply {
                             setOnClickPendingIntent(R.id.widget_symbol, pendingSearchIntent)
                             setOnClickPendingIntent(R.id.widget_search_bar_clickable, pendingSearchIntent)
                             setOnClickPendingIntent(R.id.widget_badge, pendingSearchIntent)
                             setOnClickPendingIntent(R.id.widget_btn_voice, pendingVoiceIntent)
+                            setTextViewText(R.id.widget_search_text, searchPrompt)
                             setTextViewText(R.id.widget_badge, badgeText)
                             setTextViewText(R.id.widget_sub_text, subText)
                         }

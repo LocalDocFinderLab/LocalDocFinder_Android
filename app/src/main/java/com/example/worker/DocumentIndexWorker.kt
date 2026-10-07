@@ -30,6 +30,7 @@ class DocumentIndexWorker(
         const val KEY_INDEX_ANDROID = "key_index_android"
         const val KEY_INDEX_ENTIRE_SYSTEM = "key_index_entire_system"
         const val KEY_FILE_URIS = "key_file_uris"
+        const val KEY_ALLOWED_EXTENSIONS = "key_allowed_extensions"
         const val KEY_PROGRESS_CURRENT = "key_progress_current"
         const val KEY_PROGRESS_TOTAL = "key_progress_total"
         const val KEY_PROGRESS_PERCENT = "key_progress_percent"
@@ -51,6 +52,7 @@ class DocumentIndexWorker(
         val shouldIndexAndroid = inputData.getBoolean(KEY_INDEX_ANDROID, false)
         val shouldIndexEntireSystem = inputData.getBoolean(KEY_INDEX_ENTIRE_SYSTEM, false)
         val fileUriStrings = inputData.getStringArray(KEY_FILE_URIS)
+        val allowedExtensions = inputData.getStringArray(KEY_ALLOWED_EXTENSIONS)?.map { it.lowercase().removePrefix(".") }?.toSet()
 
         val wakeLock = IndexingWakeLock.acquire(context, TAG)
         try {
@@ -61,8 +63,14 @@ class DocumentIndexWorker(
 
             if (shouldIndexEntireSystem) {
                 // Entire System scan: Scans device storage, ignoring system files, packages, databases, and videos
-                postProgress(5, "Scanning system storage…", "Ignoring system files, packages, databases, and videos")
-                val files = repository.documentParser.scanEntireSystemStorage()
+                postProgress(5, "Scanning system storage…", "Searching for documents across device storage")
+                var files = repository.documentParser.scanEntireSystemStorage()
+                if (allowedExtensions != null && allowedExtensions.isNotEmpty()) {
+                    files = files.filter { f ->
+                        val ext = f.name?.substringAfterLast('.', "")?.lowercase() ?: ""
+                        ext in allowedExtensions
+                    }
+                }
 
                 if (files.isEmpty()) {
                     IndexingController.setFullStorageCrawlDone(context, true)
