@@ -593,15 +593,24 @@ class DocumentParser(
     private fun extractPlainText(uri: Uri): String {
         openStreamSafe(uri).use { stream ->
             BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
-                val buffer = CharArray(8192)
+                val buffer = CharArray(16384)
                 val sb = StringBuilder()
                 var read: Int
                 var totalChars = 0
-                val maxChars = 500_000 // Limit text extraction to ~500k chars to prevent memory exhaustion on massive files
+                val maxChars = 2_000_000 // Support large documents up to ~2M chars (~500 pages)
                 while (reader.read(buffer).also { read = it } != -1) {
                     sb.append(buffer, 0, read)
                     totalChars += read
                     if (totalChars >= maxChars) break
+                    if (totalChars % 200_000 == 0) {
+                        val runtime = Runtime.getRuntime()
+                        val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                        if (availableMemory < 25L * 1024 * 1024) {
+                            System.gc()
+                            val afterGc = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                            if (afterGc < 20L * 1024 * 1024) break
+                        }
+                    }
                 }
                 return sb.toString()
             }

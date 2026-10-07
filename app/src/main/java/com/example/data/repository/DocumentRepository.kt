@@ -284,8 +284,8 @@ class DocumentRepository(
                 val finalEntities = mutableListOf<DocumentChunkEntity>()
                 val fileTimestamp = if (sourceModified > 0) sourceModified else System.currentTimeMillis()
 
-                // Cap total chunks per document to 600 to prevent mobile memory exhaustion on massive documents
-                val chunksToProcess = parsed.chunks.take(600)
+                // Support large documents with up to 1,000 chunks while maintaining memory safety
+                val chunksToProcess = parsed.chunks.take(1000)
 
                 for (chunk in chunksToProcess) {
                     val existing = existingHashMap[chunk.hash]
@@ -341,7 +341,10 @@ class DocumentRepository(
                 onSubProgress?.invoke("Writing vectors to database…", 95, 100)
                 try {
                     dao.deleteFileRecord(parsed.fileUri)
-                    dao.insertChunksWithFts(finalEntities)
+                    // Insert in batches of 100 chunks to prevent SQLite Cursor / bind variable memory exhaustion on large documents
+                    for (chunkBatch in finalEntities.chunked(100)) {
+                        dao.insertChunksWithFts(chunkBatch)
+                    }
                 } catch (e: Throwable) {
                     Log.e(TAG, "Database insert failure for $fileName: ${e.message}")
                     return@withTimeoutOrNull IndexDocResult(
