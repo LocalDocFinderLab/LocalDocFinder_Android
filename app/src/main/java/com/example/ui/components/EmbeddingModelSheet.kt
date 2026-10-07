@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
@@ -66,7 +67,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.example.engine.model.EmbeddingModelType
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun EmbeddingModelSheet(
     activeModel: EmbeddingModelType,
@@ -84,7 +85,11 @@ fun EmbeddingModelSheet(
     onReindexClick: () -> Unit,
     onTestBenchmark: suspend (query: String, textA: String, textB: String) -> Triple<Float, Float, Long>,
     onDismiss: () -> Unit,
-    sheetState: SheetState
+    sheetState: SheetState,
+    downloadingModel: EmbeddingModelType? = null,
+    downloadProgress: Float = 0f,
+    downloadStatusMessage: String = "",
+    onDownloadModel: (EmbeddingModelType) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -206,13 +211,13 @@ fun EmbeddingModelSheet(
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                    color = Color(0xFF10B981).copy(alpha = 0.12f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "${activeModel.shortName} isn't installed yet, so the ${effectiveModel.shortName} embedder is being used. Import its model files below to switch.",
+                        text = "The ${effectiveModel.shortName} model is active and running completely offline. (${activeModel.shortName} is an optional developer model that requires custom file export).",
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFFB45309),
+                        color = Color(0xFF047857),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                     )
                 }
@@ -310,10 +315,11 @@ fun EmbeddingModelSheet(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Specs Pill Row
-                        Row(
+                        // Specs Pill Row (wrapped with FlowRow so pills never squeeze vertically)
+                        androidx.compose.foundation.layout.FlowRow(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -356,41 +362,129 @@ fun EmbeddingModelSheet(
                             }
                         }
 
-                        if (!model.isBuiltIn) {
+                        if (model.isBuiltIn) {
                             Spacer(modifier = Modifier.height(10.dp))
-                            val installed = model in installedModels
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF10B981).copy(alpha = 0.12f)
                             ) {
-                                Text(
-                                    text = if (installed) "✓ Installed" else "Model files not installed",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (installed) Color(0xFF10B981) else Color(0xFFF59E0B)
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    if (installed) {
-                                        TextButton(onClick = { onRemoveModel(model) }) { Text("Remove") }
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            importTarget = model
-                                            importLauncher.launch(arrayOf("*/*"))
-                                        },
-                                        modifier = Modifier.testTag("btn_import_${model.id}")
-                                    ) {
-                                        Text(if (installed) "Replace files" else "Import model files")
-                                    }
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Pre-Installed & Ready Out-of-the-Box",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF047857)
+                                    )
                                 }
                             }
-                            if (!installed) {
-                                Text(
-                                    text = "Pick model.tflite and vocab.txt together. Create them with tools/export_embedding_model.py (${model.sourceCheckpoint}, ${model.licence}).",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        } else {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val installed = model in installedModels
+                            val isCurrentlyDownloading = downloadingModel == model
+
+                            if (isCurrentlyDownloading) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = downloadStatusMessage.ifBlank { "Downloading model files…" },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Text(
+                                            text = "${(downloadProgress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { downloadProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp)),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            } else {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (installed) "✓ Installed & Ready" else "Ready to download",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (installed) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                                        )
+
+                                        if (installed) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                TextButton(onClick = { onRemoveModel(model) }) { 
+                                                    Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) 
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (!installed && model.downloadModelUrl != null) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        val sizeMb = model.downloadSizeBytes / (1024 * 1024)
+                                        Button(
+                                            onClick = { onDownloadModel(model) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("btn_download_model_${model.id}"),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Download & Install ($sizeMb MB)",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

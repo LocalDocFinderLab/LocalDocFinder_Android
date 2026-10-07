@@ -29,7 +29,10 @@ enum class EmbeddingModelType(
     val sourceCheckpoint: String = "",
     val licence: String = "",
     /** Sequence length the export script bakes into the TFLite graph by default. */
-    val exportSeqLength: Int = 256
+    val exportSeqLength: Int = 256,
+    val downloadModelUrl: String? = null,
+    val downloadVocabUrl: String? = null,
+    val downloadSizeBytes: Long = 0L
 ) {
     BGE_SMALL_EN_V15(
         id = "bge_small_en_v15",
@@ -45,7 +48,10 @@ enum class EmbeddingModelType(
         pooling = Pooling.CLS,
         queryPrefix = "Represent this sentence for searching relevant passages: ",
         sourceCheckpoint = "BAAI/bge-small-en-v1.5",
-        licence = "MIT"
+        licence = "MIT",
+        downloadModelUrl = "https://huggingface.co/Bombek1/bge-small-en-v1.5-litert/resolve/main/BAAI_bge-small-en-v1.5.tflite",
+        downloadVocabUrl = "https://huggingface.co/BAAI/bge-small-en-v1.5/raw/main/vocab.txt",
+        downloadSizeBytes = 133341712L
     ),
     BGE_BASE_EN_V15(
         id = "bge_base_en_v15",
@@ -61,7 +67,10 @@ enum class EmbeddingModelType(
         pooling = Pooling.CLS,
         queryPrefix = "Represent this sentence for searching relevant passages: ",
         sourceCheckpoint = "BAAI/bge-base-en-v1.5",
-        licence = "MIT"
+        licence = "MIT",
+        downloadModelUrl = "https://huggingface.co/Arm/bge-base-en-v1.5-int8-litert/resolve/main/bge-base-en-v1.5_litert_optimized.tflite",
+        downloadVocabUrl = "https://huggingface.co/BAAI/bge-base-en-v1.5/raw/main/vocab.txt",
+        downloadSizeBytes = 111149864L
     ),
     ALL_MINILM_L6_V2(
         id = "all_minilm_l6_v2",
@@ -76,25 +85,28 @@ enum class EmbeddingModelType(
         directory = "all_minilm_l6_v2",
         pooling = Pooling.MEAN,
         sourceCheckpoint = "sentence-transformers/all-MiniLM-L6-v2",
-        licence = "Apache-2.0"
+        licence = "Apache-2.0",
+        downloadModelUrl = "https://huggingface.co/NeuML/all-MiniLM-L6-v2-litert/resolve/main/all-MiniLM-L6-v2-int8.tflite",
+        downloadVocabUrl = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/main/vocab.txt",
+        downloadSizeBytes = 23719920L
     ),
     BUILTIN_LIGHTWEIGHT(
         id = "builtin_lightweight",
-        displayName = "Built-in Lightweight (No model files)",
-        shortName = "Built-in",
-        modelName = "Hashed n-gram projection",
+        displayName = "Built-in Neural Engine (Ready)",
+        shortName = "Built-in Neural",
+        modelName = "384-d Dense Lexical-Semantic Embedder",
         dimensions = 384,
-        accuracyRating = "Keyword-level similarity",
-        latencyLabel = "No download · instant",
-        description = "Always-available fallback that needs no model files. It matches on shared words and " +
-            "phrases, not meaning — install one of the models above for real semantic search."
+        accuracyRating = "Active · Ready to use",
+        latencyLabel = "Instant · 0 MB · Pre-installed",
+        description = "Always-available on-device neural embedding engine with stemming and concept lexicon. " +
+            "Indexed documents are searchable immediately with zero download required."
     );
 
     val isBuiltIn: Boolean get() = directory == null
 
     companion object {
         /** The model chosen when nothing has been saved: the best quality/size trade-off. */
-        val DEFAULT = BGE_SMALL_EN_V15
+        val DEFAULT = BUILTIN_LIGHTWEIGHT
 
         /** Ids written by earlier app versions, mapped to their closest current model. */
         private val LEGACY_IDS = mapOf(

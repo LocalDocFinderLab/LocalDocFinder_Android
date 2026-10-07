@@ -108,6 +108,23 @@ class UnifiedEmbeddingManager(
         return error
     }
 
+    /** Downloads model files directly from online repo. Returns null on success or error string. */
+    suspend fun downloadModel(
+        model: EmbeddingModelType,
+        onProgress: (percent: Int, status: String) -> Unit
+    ): String? {
+        val error = store.downloadModel(model, onProgress = onProgress)
+        if (error == null) {
+            val stale = synchronized(stateLock) {
+                brokenModels.remove(model)
+                loadedEmbedders.remove(model)
+            }
+            stale?.close()
+            refreshAvailability()
+        }
+        return error
+    }
+
     fun removeModel(model: EmbeddingModelType) {
         val stale = synchronized(stateLock) {
             brokenModels.remove(model)

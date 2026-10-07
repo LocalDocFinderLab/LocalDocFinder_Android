@@ -130,4 +130,102 @@ class EmbeddingModelStore(private val context: Context) {
     fun removeImported(model: EmbeddingModelType) {
         if (!model.isBuiltIn) internalDir(model).deleteRecursively()
     }
+
+    /**
+     * Downloads model and vocab files directly from official repositories using OkHttp.
+     * Reports live percentage (0-100%) and error if any.
+     */
+    suspend fun downloadModel(
+        model: EmbeddingModelType,
+        onProgress: (percent: Int, status: String) -> Unit
+    ): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (model.isBuiltIn) return@withContext "The built-in model is already installed."
+        val modelUrl = model.downloadModelUrl ?: return@withContext "No download URL available for ${model.shortName}"
+        val vocabUrl = model.downloadVocabUrl ?: return@withContext "No vocab URL available for ${model.shortName}"
+
+        val client = okhttp3.OkHttpClient.Builder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val dir = internalDir(model)
+        val tmpDir = File(dir.parentFile, "${dir.name}.tmp")
+
+        try {
+            tmpDir.deleteRecursively()
+            tmpDir.mkdirs()
+
+            // 1. Download vocab.txt (small, ~200-500 KB)
+            onProgress(5, "Downloading vocabulary (${model.shortName})…")
+            val vocabReq = okhttp3.Request.Builder()
+                .url(vocabUrl)
+                .header("User-Agent", "LocalDocFinder/1.0 (Android; OnDeviceSearch)")
+                .build()
+            val vocabFile = File(tmpDir, VOCAB_FILE)
+            client.newCall(vocabReq).execute().use { response ->
+                if (!response.isSuccessful) return@withContext "Failed downloading vocabulary: HTTP ${response.code}"
+                val body = response.body ?: return@withContext "Empty vocabulary response"
+                vocabFile.outputStream().use { out ->
+                    body.byteStream().copyTo(out)
+                }
+            }
+
+            if (!looksLikeVocab(vocabFile.readText())) {
+                return@withContext "Downloaded vocabulary failed BERT validation."
+            }
+
+            // 2. Download model.tflite (20MB - 130MB)
+            onProgress(15, "Downloading model weights (${model.shortName})…")
+            val modelReq = okhttp3.Request.Builder()
+                .url(modelUrl)
+                .header("User-Agent", "LocalDocFinder/1.0 (Android; OnDeviceSearch)")
+                .build()
+            val modelFile = File(tmpDir, MODEL_FILE)
+            client.newCall(modelReq).execute().use { response ->
+                if (!response.isSuccessful) return@withContext "Failed downloading model weights: HTTP ${response.code}"
+                val body = response.body ?: return@withContext "Empty model weights response"
+                val contentLength = body.contentLength()
+                val totalBytes = if (contentLength > 0) contentLength else model.downloadSizeBytes
+
+                body.byteStream().use { input ->
+                    modelFile.outputStream().use { output ->
+                        val buffer = ByteArray(16384)
+                        var bytesRead: Int
+                        var totalRead = 0L
+
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalRead += bytesRead
+                            if (totalBytes > 0) {
+                                val pct = (15 + (totalRead.toFloat() / totalBytes.toFloat() * 80f)).toInt().coerceIn(15, 95)
+                                onProgress(pct, "Downloading ${model.shortName} (${totalRead / (1024 * 1024)} MB)…")
+                            }
+                        }
+                    }
+                }
+            }
+
+            val header = modelFile.inputStream().use { ByteArray(8).also { buf -> it.read(buf) } }
+            if (!looksLikeTflite(header)) {
+                return@withContext "Downloaded file is not a valid TensorFlow Lite model."
+            }
+
+            onProgress(98, "Finalizing installation…")
+            dir.deleteRecursively()
+            if (!tmpDir.renameTo(dir)) {
+                return@withContext "Could not finalize model directory."
+            }
+
+            onProgress(100, "Successfully installed ${model.shortName}")
+            Log.i(TAG, "Downloaded and installed ${model.id} successfully")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Download error for ${model.id}: ${e.message}", e)
+            "Download failed: ${e.localizedMessage ?: e.message}"
+        } finally {
+            tmpDir.deleteRecursively()
+        }
+    }
 }
