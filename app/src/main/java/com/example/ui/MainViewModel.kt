@@ -630,10 +630,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        // Reflect manual index jobs in the Start/Stop button even if they were started before this screen opened
+        // Reflect manual index jobs in the Start/Stop button and live progress even if they were started before this screen opened
         viewModelScope.launch {
             workManager.getWorkInfosByTagFlow(DocumentIndexWorker.TAG).collect { infos ->
-                _isDocumentIndexRunning.value = infos.any { it.state == WorkInfo.State.RUNNING }
+                val running = infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                _isDocumentIndexRunning.value = running != null
+                if (running != null) {
+                    val progress = running.progress
+                    val current = progress.getInt(DocumentIndexWorker.KEY_PROGRESS_CURRENT, 0)
+                    val total = progress.getInt(DocumentIndexWorker.KEY_PROGRESS_TOTAL, 0)
+                    val percent = progress.getInt(DocumentIndexWorker.KEY_PROGRESS_PERCENT, 0)
+                    val currentFile = progress.getString(DocumentIndexWorker.KEY_CURRENT_FILE) ?: "Discovering files…"
+                    val currentPhase = progress.getString(DocumentIndexWorker.KEY_CURRENT_PHASE) ?: "Indexing"
+                    _indexingState.value = IndexingState.Progress(current, total, percent, currentFile, currentPhase)
+                }
             }
         }
 

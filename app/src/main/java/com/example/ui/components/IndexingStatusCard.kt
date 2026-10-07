@@ -138,21 +138,51 @@ fun IndexingStatusCard(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(
-                            text = "Local Search Index",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Local Search Index",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (indexingState is IndexingState.Progress) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.testTag("indexing_percentage_badge")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(9.dp),
+                                            strokeWidth = 1.5.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "${indexingState.percent}%",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         Text(
                             text = when {
-                                indexingState is IndexingState.Progress -> "Indexing ${indexingState.current}/${indexingState.total} (${indexingState.percent}%)"
+                                indexingState is IndexingState.Progress -> "Indexing ${indexingState.current}/${indexingState.total} (${indexingState.percent}%) • ${indexingState.currentFile}"
                                 isIndexingActive -> "Scanning for new files…"
                                 isStoppedByUser -> "Indexing stopped"
                                 else -> "All files scanned & ready"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
                             modifier = Modifier.testTag("indexing_status_text")
                         )
                     }
@@ -201,11 +231,33 @@ fun IndexingStatusCard(
             // Minimal progress bar when collapsed and active
             if (effectivelyMinimized && indexingState is IndexingState.Progress) {
                 Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = indexingState.currentFile,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${indexingState.percent}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     progress = { indexingState.percent.toFloat() / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp)
+                        .height(4.dp)
                         .clip(RoundedCornerShape(2.dp)),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
