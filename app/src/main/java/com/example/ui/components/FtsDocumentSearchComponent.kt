@@ -105,11 +105,19 @@ fun FtsDocumentSearchComponent(
     onDeleteHistoryItem: (Long) -> Unit = {},
     onClearHistory: () -> Unit = {},
     selectedFileType: String? = null,
+    availableFileTypes: List<String> = emptyList(),
+    fileTypeCounts: Map<String, Int> = emptyMap(),
     onSelectFileType: (String?) -> Unit = {},
     selectedConfidenceTier: String? = null,
+    onSelectConfidenceTier: (String?) -> Unit = {},
+    sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE,
+    onSelectSortOrder: (com.example.engine.SearchSortOrder) -> Unit = {},
     selectedDatePreset: DateRangePreset = DateRangePreset.ALL_TIME,
     startDateMillis: Long? = null,
     endDateMillis: Long? = null,
+    onSelectDatePreset: (DateRangePreset) -> Unit = {},
+    onSelectDateRange: (Long?, Long?) -> Unit = { _, _ -> },
+    onClearDateFilter: () -> Unit = {},
     isMultiSelectMode: Boolean = false,
     selectedDocumentUris: Set<String> = emptySet(),
     onToggleMultiSelectMode: (Boolean?) -> Unit = {},
@@ -129,12 +137,18 @@ fun FtsDocumentSearchComponent(
 ) {
     val isSearchActive = query.isNotBlank() || selectedTag != null
     var isVisualGridMode by remember { mutableStateOf(false) }
+    val isDateFiltered = selectedDatePreset != DateRangePreset.ALL_TIME || startDateMillis != null || endDateMillis != null
     val hasActiveFilters = selectedFileType != null ||
             selectedConfidenceTier != null ||
             selectedTag != null ||
-            selectedDatePreset != DateRangePreset.ALL_TIME ||
-            startDateMillis != null ||
-            endDateMillis != null
+            sortOrder != com.example.engine.SearchSortOrder.RELEVANCE ||
+            isDateFiltered
+
+    val activeFilterCount = (if (selectedFileType != null) 1 else 0) +
+            (if (selectedConfidenceTier != null) 1 else 0) +
+            (if (isDateFiltered) 1 else 0) +
+            (if (sortOrder != com.example.engine.SearchSortOrder.RELEVANCE) 1 else 0) +
+            (if (selectedTag != null) 1 else 0)
 
     Column(modifier = modifier.fillMaxSize()) {
         // 1. Search Bar Text Field
@@ -255,7 +269,210 @@ fun FtsDocumentSearchComponent(
                 }
             }
         } else {
-            // SEARCHING / RESULTS MODE: Active Filter & Latency Row
+            // SEARCHING / RESULTS MODE:
+            // Active Filter Chips Summary (Removable Badges)
+            if (hasActiveFilters) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp)
+                ) {
+                    // Reset all button
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onResetFilters() }
+                                .testTag("fts_btn_quick_reset_filters")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Reset filters",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Reset All",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    // Active File Type Badge
+                    if (selectedFileType != null) {
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onSelectFileType(null) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Type: .${selectedFileType.lowercase()}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove file type filter",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Active Date Badge
+                    if (isDateFiltered) {
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onClearDateFilter() }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Date: ${formatDateRangeLabel(startDateMillis, endDateMillis, selectedDatePreset)}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear date filter",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Active Sort Order Badge
+                    if (sortOrder != com.example.engine.SearchSortOrder.RELEVANCE) {
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onSelectSortOrder(com.example.engine.SearchSortOrder.RELEVANCE) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Sort: ${sortOrder.shortName}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Reset sort to relevance",
+                                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Active Tag Badge
+                    if (selectedTag != null) {
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onSelectTag(null) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Tag: #$selectedTag",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove tag filter",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Active Confidence Tier Badge
+                    if (selectedConfidenceTier != null) {
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onSelectConfidenceTier(null) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Quality: $selectedConfidenceTier",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove quality filter",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Interactive Filter Bar: Filter & Sort Button + Quick File Types + Latency
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -263,7 +480,7 @@ fun FtsDocumentSearchComponent(
             ) {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = if (hasActiveFilters) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .clickable { onOpenFilterSheet() }
@@ -276,15 +493,15 @@ fun FtsDocumentSearchComponent(
                         Icon(
                             imageVector = Icons.Default.FilterList,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (hasActiveFilters) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Filter & Sort",
+                            text = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filter & Sort",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (hasActiveFilters) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -308,33 +525,71 @@ fun FtsDocumentSearchComponent(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Quick File Extensions
+                // Dynamic File Format Chips with accurate real counts
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    val quickTypes = listOf("all", "images", "pdf", "txt", "md")
-                    items(quickTypes) { ext ->
-                        val isSelected = (ext == "all" && selectedFileType == null) ||
-                                (ext == "images" && (selectedFileType.equals("images", ignoreCase = true) || selectedFileType.equals("jpg", ignoreCase = true) || selectedFileType.equals("png", ignoreCase = true))) ||
-                                (ext != "all" && ext != "images" && selectedFileType.equals(ext, ignoreCase = true))
+                    // All chip
+                    item {
+                        val isAll = selectedFileType == null
+                        FilterChip(
+                            selected = isAll,
+                            onClick = { onSelectFileType(null) },
+                            label = {
+                                Text(
+                                    text = if (rawResults.isNotEmpty()) "All (${rawResults.size})" else "All",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isAll) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier.testTag("fts_ext_chip_all")
+                        )
+                    }
+
+                    val dynamicExtensions = linkedSetOf<String>().apply {
+                        addAll(availableFileTypes)
+                        if (size < 3) {
+                            addAll(listOf("pdf", "txt", "md", "docx"))
+                        }
+                    }.toList()
+
+                    items(dynamicExtensions) { ext ->
+                        val isSelected = selectedFileType.equals(ext, ignoreCase = true)
+                        val count = fileTypeCounts[ext.lowercase()] ?: 0
+                        val badgeColor = getFileTypeBadgeColor(ext)
+
                         FilterChip(
                             selected = isSelected,
                             onClick = {
-                                if (ext == "all") onSelectFileType(null)
-                                else if (ext == "images") onSelectFileType(if (isSelected) null else "images")
-                                else onSelectFileType(if (isSelected) null else ext)
+                                if (isSelected) onSelectFileType(null) else onSelectFileType(ext)
+                            },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(badgeColor)
+                                )
                             },
                             label = {
                                 Text(
-                                    text = if (ext == "all") "All" else if (ext == "images") "Images" else ".${ext}",
+                                    text = if (count > 0) ".${ext.lowercase()} ($count)" else ".${ext.lowercase()}",
                                     fontSize = 11.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontFamily = if (ext != "all" && ext != "images") FontFamily.Monospace else FontFamily.Default
+                                    fontFamily = FontFamily.Monospace
                                 )
                             },
-                            modifier = Modifier.testTag("fts_ext_chip_${ext}")
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            ),
+                            modifier = Modifier.testTag("fts_ext_chip_${ext.lowercase()}")
                         )
                     }
                 }
