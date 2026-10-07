@@ -21,9 +21,9 @@ internal object PdfBoxTextExtractor {
 
     const val NAME = "pdfbox"
 
-    /** PDFBox keeps this much of the file in RAM and spills the rest to a temp file. */
-    private const val MAIN_MEMORY_BYTES = 8L * 1024 * 1024
-    const val DEFAULT_MAX_PAGES = 300
+    /** PDFBox keeps this much of the file in RAM and spills the rest to disk scratch cache. */
+    private const val MAIN_MEMORY_BYTES = 2L * 1024 * 1024
+    const val DEFAULT_MAX_PAGES = 150
     const val DEFAULT_MAX_CHARS = 1_000_000
     private const val MAX_EXTRACTION_TIME_MS = 25_000L
 
@@ -91,6 +91,24 @@ internal object PdfBoxTextExtractor {
                     truncated = true
                     break
                 }
+
+                // Check memory health periodically to protect system and prevent low-memory killer terminations
+                if (pageNumber % 5 == 0) {
+                    val runtime = Runtime.getRuntime()
+                    val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                    if (availableMemory < 30L * 1024 * 1024) {
+                        System.gc()
+                        val afterGc = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                        if (afterGc < 20L * 1024 * 1024) {
+                            Log.w(TAG, "Low memory safeguard triggered at page $pageNumber; stopping extraction safely.")
+                            truncated = true
+                            break
+                        }
+                    }
+                    // Cooperative yield to keep Android UI thread responsive
+                    Thread.yield()
+                }
+
                 val text = try {
                     stripper.setStartPage(pageNumber)
                     stripper.setEndPage(pageNumber)
