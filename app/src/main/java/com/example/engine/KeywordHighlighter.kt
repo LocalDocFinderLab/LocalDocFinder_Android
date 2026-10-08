@@ -52,8 +52,10 @@ object KeywordHighlighter {
 
         // 2. Query words
         if (!query.isNullOrBlank()) {
+            // Keep a punctuated single-token query (e.g. "report.pdf", "c++") whole so it is highlighted as one
+            // match. Multi-word queries are highlighted word by word, not as one phrase.
             val cleanFull = cleanToken(query)
-            if (cleanFull.length >= 2 && !STOP_WORDS.contains(cleanFull)) {
+            if (cleanFull.length >= 2 && cleanFull.none { it.isWhitespace() } && !STOP_WORDS.contains(cleanFull)) {
                 tokens.add(cleanFull)
             }
 
