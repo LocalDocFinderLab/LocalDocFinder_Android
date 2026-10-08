@@ -5,6 +5,11 @@ on:
     tags: ["v*"]
     branches: ["claude/**"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create from this commit (e.g. v1.1.0). Leave empty to only build."
+        required: false
+        default: ""
 
 concurrency:
   group: android-${{ github.ref }}
@@ -95,7 +100,7 @@ jobs:
   release:
     name: Publish GitHub release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -108,14 +113,17 @@ jobs:
       - name: Create release with APK
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
+          # A pushed tag already exists; a manual run creates the tag on this commit when the release is made.
+          if [ "$EVENT" = "workflow_dispatch" ]; then TAG_FLAG="--target $GITHUB_SHA"; else TAG_FLAG="--verify-tag"; fi
           APK="LocalDocFinder-${TAG}.apk"
           cp dist/*.apk "$APK"
           sha256sum "$APK" > "$APK.sha256"
           NOTES="release-notes/${TAG}.md"
           if [ -f "$NOTES" ]; then
-            gh release create "$TAG" "$APK" "$APK.sha256" --verify-tag --title "LocalDoc Finder ${TAG}" --notes-file "$NOTES"
+            gh release create "$TAG" "$APK" "$APK.sha256" $TAG_FLAG --title "LocalDoc Finder ${TAG}" --notes-file "$NOTES"
           else
-            gh release create "$TAG" "$APK" "$APK.sha256" --verify-tag --title "LocalDoc Finder ${TAG}" --generate-notes
+            gh release create "$TAG" "$APK" "$APK.sha256" $TAG_FLAG --title "LocalDoc Finder ${TAG}" --generate-notes
           fi
