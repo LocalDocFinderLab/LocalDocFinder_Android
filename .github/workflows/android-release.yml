@@ -23,6 +23,7 @@ jobs:
           java-version: "21"
 
       - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
 
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -75,6 +76,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Create debug keystore
