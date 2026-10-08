@@ -103,6 +103,9 @@ fun AppNavigationDrawerContent(
     onPickDocumentClick: () -> Unit,
     onPickFilesClick: () -> Unit,
     onIndexByFileTypesClick: () -> Unit = {},
+    importedDocumentCount: Int = 0,
+    onOpenImportedDocuments: () -> Unit = {},
+    onOpenWhatsNew: () -> Unit = {},
     onLoadSampleClick: () -> Unit,
     onLoad100SamplesClick: () -> Unit,
     onSeedTestDocumentsClick: () -> Unit,
@@ -555,6 +558,28 @@ fun AppNavigationDrawerContent(
                     onPickFilesClick()
                 },
                 testTag = "drawer_pick_files"
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Default.Folder,
+                title = "Imported Documents",
+                subtitle = if (importedDocumentCount > 0) "$importedDocumentCount saved path(s) · status & retry" else "Saved paths picked with the file picker",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenImportedDocuments()
+                },
+                testTag = "drawer_imported_documents"
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Default.AutoAwesome,
+                title = "What's New",
+                subtitle = "Features and development notes for this version",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenWhatsNew()
+                },
+                testTag = "drawer_whats_new"
             )
 
             DrawerMenuItem(

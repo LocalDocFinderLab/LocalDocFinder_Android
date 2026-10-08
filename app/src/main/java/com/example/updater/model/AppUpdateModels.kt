@@ -76,8 +76,8 @@ sealed interface DownloadState {
 
 data class UpdateConfig(
     val sourceType: UpdateSourceType = UpdateSourceType.GITHUB_RELEASES,
-    val githubRepo: String = "mhvr226/localdoc-finder",
-    val customManifestUrl: String = "https://raw.githubusercontent.com/mhvr226/localdoc-finder/main/update.json",
+    val githubRepo: String = "localdocfinderlab/localdocfinder_android",
+    val customManifestUrl: String = "https://raw.githubusercontent.com/localdocfinderlab/localdocfinder_android/main/update.json",
     val autoCheckEnabled: Boolean = true,
     val checkOnWifiOnly: Boolean = false,
     val lastCheckTimestamp: Long = 0L,

@@ -256,7 +256,8 @@ object KeywordHighlighter {
         query: String? = null,
         highlightColor: Color = Color(0xFF38BDF8),
         highlightBgColor: Color = Color(0xFF38BDF8).copy(alpha = 0.22f),
-        baseTextColor: Color = Color.Unspecified
+        baseTextColor: Color = Color.Unspecified,
+        boldMatchingTerms: Boolean = true
     ): AnnotatedString {
         return highlightText(
             text = snippet,
@@ -265,7 +266,7 @@ object KeywordHighlighter {
             highlightColor = highlightColor,
             highlightBgColor = highlightBgColor,
             baseTextColor = baseTextColor,
-            boldMatchingTerms = true
+            boldMatchingTerms = boldMatchingTerms
         ).annotatedString
     }
 }

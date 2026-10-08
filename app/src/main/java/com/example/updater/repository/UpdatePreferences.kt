@@ -26,11 +26,11 @@ class UpdatePreferences(context: Context) {
 
         return UpdateConfig(
             sourceType = sourceType,
-            githubRepo = prefs.getString(KEY_GITHUB_REPO, "mhvr226/localdoc-finder") ?: "mhvr226/localdoc-finder",
+            githubRepo = prefs.getString(KEY_GITHUB_REPO, "localdocfinderlab/localdocfinder_android") ?: "localdocfinderlab/localdocfinder_android",
             customManifestUrl = prefs.getString(
                 KEY_CUSTOM_MANIFEST_URL,
-                "https://raw.githubusercontent.com/mhvr226/localdoc-finder/main/update.json"
-            ) ?: "https://raw.githubusercontent.com/mhvr226/localdoc-finder/main/update.json",
+                "https://raw.githubusercontent.com/localdocfinderlab/localdocfinder_android/main/update.json"
+            ) ?: "https://raw.githubusercontent.com/localdocfinderlab/localdocfinder_android/main/update.json",
             autoCheckEnabled = prefs.getBoolean(KEY_AUTO_CHECK, true),
             checkOnWifiOnly = prefs.getBoolean(KEY_WIFI_ONLY, false),
             lastCheckTimestamp = prefs.getLong(KEY_LAST_CHECK, 0L),

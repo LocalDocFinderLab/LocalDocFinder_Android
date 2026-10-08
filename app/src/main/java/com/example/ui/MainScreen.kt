@@ -130,6 +130,8 @@ import com.example.ui.components.ChatBackupSheet
 import com.example.ui.components.DocumentDetailSheet
 import com.example.ui.components.BackgroundScanBanner
 import com.example.ui.components.FtsDocumentSearchComponent
+import com.example.ui.components.ImportedDocumentsSheet
+import com.example.ui.components.WhatsNewDialog
 import com.example.ui.components.HardwareDashboardSheet
 import com.example.ui.components.IndexingStatusCard
 import com.example.ui.components.PixelOptimizationDialog
@@ -226,6 +228,19 @@ fun MainScreen(
     var showChatBackupSheet by remember { mutableStateOf(false) }
     var showQuarantineDialog by remember { mutableStateOf(false) }
     var showFileTypeDialog by remember { mutableStateOf(false) }
+    var showImportedDocumentsSheet by remember { mutableStateOf(false) }
+    // "What's new" appears once per installed version code; the last one shown is kept in SharedPreferences.
+    var showWhatsNew by remember {
+        mutableStateOf(
+            try {
+                context.getSharedPreferences("whats_new_prefs", android.content.Context.MODE_PRIVATE)
+                    .getInt("last_seen_version_code", 0) < com.example.BuildConfig.VERSION_CODE
+            } catch (_: Exception) {
+                false
+            }
+        )
+    }
+    val storedDocumentPaths by viewModel.storedDocumentPaths.collectAsStateWithLifecycle()
     var showCompletionBanner by remember { mutableStateOf(false) }
     var completionBannerMessage by remember { mutableStateOf("") }
     var completionBannerChunks by remember { mutableStateOf(0) }
@@ -308,13 +323,8 @@ fun MainScreen(
                 val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (_: Exception) {}
-            viewModel.processAndIngestDocument(uri) { isSuccess, fileName, chunks ->
-                if (isSuccess) {
-                    Toast.makeText(context, "Successfully indexed $fileName ($chunks chunks)", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Failed to index $fileName", Toast.LENGTH_SHORT).show()
-                }
-            }
+            viewModel.importPickedDocuments(listOf(uri))
+            Toast.makeText(context, "Saved path. Extracting text in the background…", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -329,8 +339,8 @@ fun MainScreen(
                     context.contentResolver.takePersistableUriPermission(u, takeFlags)
                 } catch (_: Exception) {}
             }
-            viewModel.indexSelectedFiles(uris)
-            Toast.makeText(context, "Indexing ${uris.size} selected file(s)…", Toast.LENGTH_SHORT).show()
+            viewModel.importPickedDocuments(uris)
+            Toast.makeText(context, "Saved ${uris.size} path(s). Extracting text in the background…", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -469,6 +479,9 @@ fun MainScreen(
                 },
                 onPickFilesClick = { filePickerLauncher.launch(arrayOf("*/*")) },
                 onIndexByFileTypesClick = { showFileTypeDialog = true },
+                importedDocumentCount = storedDocumentPaths.size,
+                onOpenImportedDocuments = { showImportedDocumentsSheet = true },
+                onOpenWhatsNew = { showWhatsNew = true },
                 onLoadSampleClick = {
                     viewModel.loadSampleKnowledgeBase()
                     Toast.makeText(context, "Loading sample technical papers…", Toast.LENGTH_SHORT).show()
@@ -1373,6 +1386,33 @@ fun MainScreen(
         )
     }
 
+    if (showWhatsNew) {
+        WhatsNewDialog(
+            versionName = com.example.BuildConfig.VERSION_NAME,
+            onDismiss = {
+                showWhatsNew = false
+                try {
+                    context.getSharedPreferences("whats_new_prefs", android.content.Context.MODE_PRIVATE)
+                        .edit()
+                        .putInt("last_seen_version_code", com.example.BuildConfig.VERSION_CODE)
+                        .apply()
+                } catch (_: Exception) {}
+            }
+        )
+    }
+
+    // Saved document/folder paths (Room) with status
+    if (showImportedDocumentsSheet) {
+        ImportedDocumentsSheet(
+            paths = storedDocumentPaths,
+            onDismiss = { showImportedDocumentsSheet = false },
+            onPickFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+            onPickFolder = { directoryPickerLauncher.launch(null) },
+            onRetryUnfinished = { viewModel.reindexStoredDocumentPaths() },
+            onRemove = { viewModel.removeStoredDocumentPath(it.uri) }
+        )
+    }
+
     // File Type Indexing Selection Dialog
     if (showFileTypeDialog) {
         FileTypeSelectionDialog(
@@ -1452,7 +1492,7 @@ fun MainScreen(
     // Document Categorization & Tagging Dialog
     taggingFileUri?.let { fileUri ->
         val fileName = taggingFileName ?: "Document"
-        val popularCategories = listOf("AI & ML", "Distributed", "Quantum", "Bio & Health", "Storage & DB", "Research", "Work", "Personal")
+        val popularCategories = com.example.engine.DocumentLabels.PREDEFINED
 
         AlertDialog(
             onDismissRequest = { taggingFileUri = null },

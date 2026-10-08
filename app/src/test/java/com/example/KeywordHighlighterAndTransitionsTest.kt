@@ -150,4 +150,32 @@ class KeywordHighlighterAndTransitionsTest {
         assertEquals(0, result.totalMatchesCount)
         assertEquals(docText, result.annotatedString.text)
     }
+
+    @Test
+    fun testBuildHighlightedSnippet_AppliesBoldAndBackgroundToMatches() {
+        val snippet = "Quarterly invoice totals for the finance team."
+        val bg = Color(0xFFFFE08A)
+
+        val annotated = KeywordHighlighter.buildHighlightedSnippet(
+            snippet = snippet,
+            terms = listOf("invoice"),
+            query = "invoice finance",
+            highlightBgColor = bg
+        )
+
+        val matchSpans = annotated.spanStyles.filter {
+            it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold && it.item.background == bg
+        }
+        assertEquals(setOf("invoice", "finance"), matchSpans.map { snippet.substring(it.start, it.end) }.toSet())
+    }
+
+    @Test
+    fun testBuildHighlightedSnippet_CanDisableBold() {
+        val annotated = KeywordHighlighter.buildHighlightedSnippet(
+            snippet = "plain match here",
+            terms = listOf("match"),
+            boldMatchingTerms = false
+        )
+        assertTrue(annotated.spanStyles.none { it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold })
+    }
 }

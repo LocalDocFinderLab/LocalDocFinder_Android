@@ -30,6 +30,7 @@ import com.example.updater.model.UpdateConfig
 import com.example.updater.repository.UpdatePreferences
 import com.example.worker.DocumentIndexWorker
 import com.example.worker.IndexingController
+import com.example.worker.PdfBoxIndexWorker
 import com.example.worker.PdfSyncWorker
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -463,8 +464,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val totalFilesCount: StateFlow<Int> = repository.totalFilesCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    /** Predefined labels (Work, Finance, Legal…) followed by every other tag already assigned to a document. */
     val allTags: StateFlow<List<String>> = repository.allTags
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .map { com.example.engine.DocumentLabels.merge(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.engine.DocumentLabels.PREDEFINED)
 
     val recentSearches: StateFlow<List<com.example.data.local.SearchHistoryEntity>> = repository.recentSearches
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -949,7 +952,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDirectoryUri(uri: Uri) {
         _currentTreeUri.value = uri
-        startIndexing(uri)
+        viewModelScope.launch {
+            // Remember the folder in Room; its status follows the folder-indexing job below.
+            try { repository.storeDocumentPathFromUri(uri, isTree = true) } catch (_: Exception) {}
+            startIndexing(uri, trackedPathUri = uri.toString())
+        }
     }
 
     fun setFileTypeFilter(fileType: String?) {
@@ -1036,15 +1043,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .build()
     }
 
-    private fun enqueueIndexRequest(request: androidx.work.OneTimeWorkRequest, uniqueName: String) {
+    private fun enqueueIndexRequest(
+        request: androidx.work.OneTimeWorkRequest,
+        uniqueName: String,
+        trackedPathUri: String? = null
+    ) {
         IndexingController.resume(getApplication())
         workManager.enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
-        observeWork(request.id)
+        observeWork(request.id, trackedPathUri)
     }
 
-    fun startIndexing(treeUri: Uri) {
+    fun startIndexing(treeUri: Uri, trackedPathUri: String? = null) {
         val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_TREE_URI to treeUri.toString()))
-        enqueueIndexRequest(request, "document_indexing_work")
+        enqueueIndexRequest(request, "document_indexing_work", trackedPathUri)
     }
 
     /**
@@ -1126,6 +1137,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val uriStrings = uris.map { it.toString() }.toTypedArray()
         val request = createIndexWorkRequest(workDataOf(DocumentIndexWorker.KEY_FILE_URIS to uriStrings))
         enqueueIndexRequest(request, "document_indexing_work")
+    }
+
+    /**
+     * Stores the paths of documents (or a folder) chosen with the SAF / DocumentFile picker in Room and
+     * hands them to [PdfBoxIndexWorker], which extracts their text with PDFBox and fills the FTS index.
+     * Re-importing a path that is already stored resets it to PENDING so it is processed again.
+     */
+    fun importPickedDocuments(uris: List<Uri>, isTree: Boolean = false) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val stored = try {
+                uris.map { repository.storeDocumentPathFromUri(it, isTree) }
+            } catch (e: Exception) {
+                _indexingState.value = IndexingState.Error("Could not save the selected path(s): ${e.localizedMessage ?: e.javaClass.simpleName}")
+                return@launch
+            }
+            IndexingController.resume(getApplication())
+            val workId = PdfBoxIndexWorker.enqueue(getApplication(), stored.map { it.uri })
+            observePdfBoxWork(workId, stored.size)
+        }
+    }
+
+    /** Re-queues every stored document path that is still PENDING or FAILED. */
+    fun reindexStoredDocumentPaths() {
+        viewModelScope.launch {
+            val toRetry = repository.getAllStoredDocumentPaths()
+                .filter { it.status != "INDEXED" }
+                .map { it.uri }
+            if (toRetry.isEmpty()) return@launch
+            toRetry.forEach { repository.updateDocumentPathStatus(it, "PENDING") }
+            IndexingController.resume(getApplication())
+            observePdfBoxWork(PdfBoxIndexWorker.enqueue(getApplication(), toRetry), toRetry.size)
+        }
+    }
+
+    fun removeStoredDocumentPath(uri: String) {
+        viewModelScope.launch { repository.deleteStoredDocumentPath(uri) }
+    }
+
+    private fun observePdfBoxWork(workId: java.util.UUID, total: Int) {
+        viewModelScope.launch {
+            workManager.getWorkInfoByIdFlow(workId).collect { workInfo ->
+                if (workInfo == null) return@collect
+                when (workInfo.state) {
+                    WorkInfo.State.RUNNING -> {
+                        val progress = workInfo.progress
+                        _indexingState.value = IndexingState.Progress(
+                            current = 0,
+                            total = total,
+                            percent = progress.getInt(PdfBoxIndexWorker.KEY_PROGRESS_PERCENT, 0),
+                            currentFile = progress.getString(PdfBoxIndexWorker.KEY_CURRENT_FILE) ?: "Preparing…",
+                            currentPhase = progress.getString(PdfBoxIndexWorker.KEY_CURRENT_PHASE) ?: "Extracting text with PDFBox"
+                        )
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val chunks = workInfo.outputData.getInt(PdfBoxIndexWorker.KEY_INDEXED_CHUNKS, 0)
+                        val failed = workInfo.outputData.getInt(PdfBoxIndexWorker.KEY_FAILED_FILES, 0)
+                        val errors = workInfo.outputData.getString(PdfBoxIndexWorker.KEY_ERROR_MESSAGE)?.takeIf { it.isNotBlank() }
+                        _indexingState.value = IndexingState.Completed(
+                            chunksCount = chunks,
+                            message = if (failed > 0) {
+                                "Indexed $chunks chunks. $failed file(s) could not be read."
+                            } else {
+                                "Indexed $chunks chunks. Ready for instant search."
+                            },
+                            failedCount = failed,
+                            errorSummary = errors
+                        )
+                        if (_query.value.isNotBlank()) performSearch(_query.value, _searchMode.value)
+                    }
+                    WorkInfo.State.FAILED -> {
+                        _indexingState.value = IndexingState.Error(
+                            workInfo.outputData.getString(PdfBoxIndexWorker.KEY_ERROR_MESSAGE) ?: "Indexing failed."
+                        )
+                    }
+                    WorkInfo.State.CANCELLED -> _indexingState.value = IndexingState.Idle
+                    else -> {}
+                }
+            }
+        }
     }
 
     /**
@@ -1267,7 +1358,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _indexingState.value = IndexingState.Idle
     }
 
-    private fun observeWork(workId: java.util.UUID) {
+    private fun observeWork(workId: java.util.UUID, trackedPathUri: String? = null) {
         viewModelScope.launch {
             workManager.getWorkInfoByIdFlow(workId).collect { workInfo ->
                 if (workInfo == null) return@collect
@@ -1286,6 +1377,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val chunks = workInfo.outputData.getInt(DocumentIndexWorker.KEY_INDEXED_CHUNKS, 0)
                         val failedCount = workInfo.outputData.getInt(DocumentIndexWorker.KEY_FAILED_COUNT, 0)
                         val errorSummary = workInfo.outputData.getString(DocumentIndexWorker.KEY_ERROR_SUMMARY)
+
+                        trackedPathUri?.let { repository.updateDocumentPathStatus(it, "INDEXED") }
 
                         val msg = if (failedCount > 0) {
                             "Indexed $chunks chunks. $failedCount file(s) skipped due to errors."
@@ -1312,6 +1405,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     WorkInfo.State.FAILED -> {
                         val err = workInfo.outputData.getString(DocumentIndexWorker.KEY_ERROR_SUMMARY)
                             ?: "Indexing failed. Please check storage permissions."
+                        trackedPathUri?.let { repository.updateDocumentPathStatus(it, "FAILED") }
                         _indexingState.value = IndexingState.Error(err)
                     }
                     WorkInfo.State.CANCELLED -> {

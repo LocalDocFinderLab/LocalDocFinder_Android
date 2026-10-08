@@ -83,3 +83,20 @@ and checks the TFLite output against the original model before writing the files
 
 `./gradlew testDebugUnitTest` runs the JVM/Robolectric tests, including the tokenizer-vs-Hugging-Face differential
 test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model manager fallback/import behaviour.
+
+## Importing documents, labels and search highlighting
+
+* **Imported Documents** (menu): files and folders picked with the system picker are stored in Room
+  (`document_paths`) with their status. `PdfBoxIndexWorker` (WorkManager) extracts their text with PDFBox and adds
+  it to the FTS4 index in the background; failed or pending paths can be retried from the same sheet.
+* **Labels:** Work, Personal, Finance, Legal, Medical, Education, Receipts, Travel and Research are always available,
+  plus any tag you create (`engine/DocumentLabels.kt`). Tap a label chip above the results to filter by it.
+* **Highlighting:** words from the search query are shown in bold with a background colour inside each excerpt
+  (`engine/KeywordHighlighter.kt`).
+
+## Releases
+
+Pushing a tag such as `v1.1.0` runs `.github/workflows/android-release.yml`, which builds the APK and publishes a
+GitHub release with the APK attached, using `release-notes/<tag>.md` as the release text. The in-app updater reads
+those notes. Add `KEYSTORE_BASE64`, `STORE_PASSWORD` and `KEY_PASSWORD` (key alias `upload`) as repository secrets to
+sign with your own key so each release installs over the previous one; without them a debug key is generated per build.
