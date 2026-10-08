@@ -76,6 +76,7 @@ class DocumentRepository(
     private val database = AppDatabase.getInstance(context)
     private val dao = database.documentChunkDao()
     private val searchHistoryDao = database.searchHistoryDao()
+    val documentPathDao = database.documentPathDao()
     /** Shared across the whole app so every indexer and the UI use the same loaded models. */
     val modelManager = com.example.engine.model.UnifiedEmbeddingManager.getInstance(context)
     val embeddingEngine = modelManager.onDeviceEngine
@@ -97,6 +98,82 @@ class DocumentRepository(
     val indexedFiles: Flow<List<String>> = dao.getIndexedFiles()
     val allTags: Flow<List<String>> = dao.getAllDistinctTags()
     val recentSearches: Flow<List<com.example.data.local.SearchHistoryEntity>> = searchHistoryDao.getRecentSearchesFlow(30)
+    val allStoredDocumentPaths: Flow<List<com.example.data.local.DocumentPathEntity>> = documentPathDao.getAllPathsFlow()
+
+    suspend fun storeDocumentPath(docFile: DocumentFile, isTree: Boolean = false): com.example.data.local.DocumentPathEntity = withContext(Dispatchers.IO) {
+        val uriStr = docFile.uri.toString()
+        val displayName = docFile.name ?: "Document"
+        val mimeType = docFile.type
+        val sizeBytes = try { docFile.length() } catch (_: Throwable) { 0L }
+        val lastMod = try { docFile.lastModified() } catch (_: Throwable) { System.currentTimeMillis() }
+        val path = docFile.uri.path ?: uriStr
+
+        val entity = com.example.data.local.DocumentPathEntity(
+            uri = uriStr,
+            path = path,
+            displayName = displayName,
+            mimeType = mimeType,
+            sizeBytes = sizeBytes,
+            lastModified = lastMod,
+            addedAt = System.currentTimeMillis(),
+            isTreeUri = isTree,
+            status = "PENDING"
+        )
+        documentPathDao.insertPath(entity)
+        entity
+    }
+
+    suspend fun storeDocumentPathFromUri(uri: Uri, isTree: Boolean = false): com.example.data.local.DocumentPathEntity = withContext(Dispatchers.IO) {
+        val docFile = try {
+            if (isTree) {
+                DocumentFile.fromTreeUri(context, uri)
+            } else {
+                DocumentFile.fromSingleUri(context, uri)
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        if (docFile != null) {
+            storeDocumentPath(docFile, isTree)
+        } else {
+            val uriStr = uri.toString()
+            val displayName = uri.lastPathSegment?.substringAfterLast('/') ?: "Document"
+            val entity = com.example.data.local.DocumentPathEntity(
+                uri = uriStr,
+                path = uri.path ?: uriStr,
+                displayName = displayName,
+                mimeType = try { context.contentResolver.getType(uri) } catch (_: Throwable) { null },
+                sizeBytes = 0L,
+                lastModified = System.currentTimeMillis(),
+                addedAt = System.currentTimeMillis(),
+                isTreeUri = isTree,
+                status = "PENDING"
+            )
+            documentPathDao.insertPath(entity)
+            entity
+        }
+    }
+
+    suspend fun storeDocumentPaths(docFiles: List<DocumentFile>, isTree: Boolean = false): List<com.example.data.local.DocumentPathEntity> = withContext(Dispatchers.IO) {
+        docFiles.map { storeDocumentPath(it, isTree) }
+    }
+
+    suspend fun deleteStoredDocumentPath(uri: String) = withContext(Dispatchers.IO) {
+        documentPathDao.deletePathByUri(uri)
+    }
+
+    suspend fun updateDocumentPathStatus(uri: String, status: String) = withContext(Dispatchers.IO) {
+        documentPathDao.updateStatus(uri, status)
+    }
+
+    suspend fun getAllStoredDocumentPaths(): List<com.example.data.local.DocumentPathEntity> = withContext(Dispatchers.IO) {
+        documentPathDao.getAllPaths()
+    }
+
+    suspend fun getPendingDocumentPaths(): List<com.example.data.local.DocumentPathEntity> = withContext(Dispatchers.IO) {
+        documentPathDao.getPathsByStatus("PENDING")
+    }
 
     var includeChatBackups: Boolean
         get() = documentParser.includeChatBackups

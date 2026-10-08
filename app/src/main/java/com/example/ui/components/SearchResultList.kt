@@ -195,8 +195,9 @@ fun SearchResultRow(
                         terms = result.highlightedTerms,
                         query = query,
                         highlightColor = MaterialTheme.colorScheme.primary,
-                        highlightBgColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                        baseTextColor = MaterialTheme.colorScheme.onSurface
+                        highlightBgColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                        baseTextColor = MaterialTheme.colorScheme.onSurface,
+                        boldMatchingTerms = true
                     ),
                     modifier = Modifier.padding(10.dp),
                     style = MaterialTheme.typography.bodyMedium,

@@ -14,9 +14,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DocumentChunkEntity::class,
         DocumentChunkFtsEntity::class,
         DocumentTagEntity::class,
-        SearchHistoryEntity::class
+        SearchHistoryEntity::class,
+        DocumentPathEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -24,6 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun documentChunkDao(): DocumentChunkDao
     abstract fun searchHistoryDao(): SearchHistoryDao
+    abstract fun documentPathDao(): DocumentPathDao
 
     /** Re-reads every row of `documents` into the FTS index (repair after external edits). */
     fun rebuildFtsIndex() {
@@ -116,13 +118,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `document_paths` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uri` TEXT NOT NULL, `path` TEXT NOT NULL, `displayName` TEXT NOT NULL, `mimeType` TEXT, `sizeBytes` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, `isTreeUri` INTEGER NOT NULL, `status` TEXT NOT NULL)"
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_document_paths_uri` ON `document_paths` (`uri`)")
+            }
+        }
+
         private fun createRoomBuilder(context: Context): RoomDatabase.Builder<AppDatabase> {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DB_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
         }

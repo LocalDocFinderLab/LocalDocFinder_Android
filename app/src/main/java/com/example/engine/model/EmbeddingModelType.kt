@@ -106,7 +106,7 @@ enum class EmbeddingModelType(
 
     companion object {
         /** The model chosen when nothing has been saved: the best quality/size trade-off. */
-        val DEFAULT = BUILTIN_LIGHTWEIGHT
+        val DEFAULT = BGE_SMALL_EN_V15
 
         /** Ids written by earlier app versions, mapped to their closest current model. */
         private val LEGACY_IDS = mapOf(

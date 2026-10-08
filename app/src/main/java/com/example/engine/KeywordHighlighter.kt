@@ -52,6 +52,11 @@ object KeywordHighlighter {
 
         // 2. Query words
         if (!query.isNullOrBlank()) {
+            val cleanFull = cleanToken(query)
+            if (cleanFull.length >= 2 && !STOP_WORDS.contains(cleanFull)) {
+                tokens.add(cleanFull)
+            }
+
             val queryWords = query.trim()
                 .replace(Regex("""[^\w\s]"""), " ")
                 .split(Regex("""\s+"""))
@@ -88,7 +93,7 @@ object KeywordHighlighter {
 
     private fun cleanToken(raw: String): String {
         return raw.trim()
-            .trim('"', '\'', '.', ',', '(', ')', '[', ']', '{', '}', ':', ';', '!', '?', '-', '_')
+            .trim('"', '\'', '.', ',', '(', ')', '[', ']', '{', '}', ':', ';', '!', '?', '-', '_', '*', '+', '%', '^', '~', '/', '\\')
             .lowercase(Locale.ROOT)
     }
 

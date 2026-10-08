@@ -241,7 +241,9 @@ fun SearchResultCard(
                                     snippet = result.snippet,
                                     terms = result.highlightedTerms,
                                     query = searchQuery,
-                                    highlightColor = MaterialTheme.colorScheme.primary
+                                    highlightColor = MaterialTheme.colorScheme.primary,
+                                    highlightBgColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                                    baseTextColor = MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier.padding(10.dp),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -293,7 +295,9 @@ fun SearchResultCard(
                             snippet = result.snippet,
                             terms = result.highlightedTerms,
                             query = searchQuery,
-                            highlightColor = MaterialTheme.colorScheme.primary
+                            highlightColor = MaterialTheme.colorScheme.primary,
+                            highlightBgColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                            baseTextColor = MaterialTheme.colorScheme.onSurface
                         ),
                         modifier = Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodyMedium,
@@ -579,14 +583,17 @@ private fun buildHighlightedText(
     snippet: String,
     terms: List<String>,
     query: String? = null,
-    highlightColor: Color
+    highlightColor: Color = Color(0xFF0284C7),
+    highlightBgColor: Color = Color(0xFF0284C7).copy(alpha = 0.28f),
+    baseTextColor: Color = Color.Unspecified
 ) = KeywordHighlighter.buildHighlightedSnippet(
     snippet = snippet,
     terms = terms,
     query = query,
     highlightColor = highlightColor,
-    highlightBgColor = highlightColor.copy(alpha = 0.22f),
-    baseTextColor = Color.Unspecified
+    highlightBgColor = highlightBgColor,
+    baseTextColor = baseTextColor,
+    boldMatchingTerms = true
 )
 
 private fun openDocument(context: Context, uriString: String) {

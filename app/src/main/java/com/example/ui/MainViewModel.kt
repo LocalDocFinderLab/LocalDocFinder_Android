@@ -105,6 +105,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sortOrder = MutableStateFlow(SearchSortOrder.RELEVANCE)
     val sortOrder: StateFlow<SearchSortOrder> = _sortOrder.asStateFlow()
 
+    val storedDocumentPaths: StateFlow<List<com.example.data.local.DocumentPathEntity>> =
+        repository.allStoredDocumentPaths.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            emptyList()
+        )
+
     // Configurable hybrid search ranking weights (Vector similarity vs SQLite FTS BM25)
     private val _vectorWeight = MutableStateFlow(0.5f)
     val vectorWeight: StateFlow<Float> = _vectorWeight.asStateFlow()
