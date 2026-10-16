@@ -17,6 +17,12 @@ data class ChunkEmbeddingRow(
     val metadata: String
 )
 
+/** One (file, tag) pair, so the tags of many files can be loaded with a single query. */
+data class FileTagRow(
+    val fileUri: String,
+    val tag: String
+)
+
 /** When a file was last indexed (its stored source timestamp) and how many chunks it currently has. */
 data class FileIndexStamp(
     val lastIndexed: Long?,
@@ -124,6 +130,25 @@ interface DocumentChunkDao {
 
     @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id IN (:chunkIds)")
     suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>
+
+    /**
+     * Keyset-paginated embedding scan (ascending id). Lets vector search stream the corpus in small pages
+     * without ever materialising chunk text or the whole table in memory.
+     */
+    @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getEmbeddingPage(afterId: Long, limit: Int): List<ChunkEmbeddingRow>
+
+    @Query("SELECT * FROM documents WHERE id IN (:chunkIds)")
+    suspend fun getChunksByIds(chunkIds: List<Long>): List<DocumentChunkEntity>
+
+    @Query("SELECT * FROM documents WHERE fileUri IN (:fileUris)")
+    suspend fun getChunksForFiles(fileUris: List<String>): List<DocumentChunkEntity>
+
+    @Query("SELECT * FROM documents WHERE tags LIKE '%' || :tag || '%'")
+    suspend fun getChunksWithTagText(tag: String): List<DocumentChunkEntity>
+
+    @Query("SELECT fileUri, tag FROM document_tags WHERE fileUri IN (:fileUris) ORDER BY tag ASC")
+    suspend fun getTagsForFiles(fileUris: List<String>): List<FileTagRow>
 
     /**
      * Number of chunks whose vector was NOT produced by [modelId] (including chunks indexed before models

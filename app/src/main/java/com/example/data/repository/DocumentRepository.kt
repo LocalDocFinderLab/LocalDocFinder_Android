@@ -987,18 +987,18 @@ class DocumentRepository(
     suspend fun reindexAllDocumentsWithActiveModel(
         onProgress: (current: Int, total: Int, currentFile: String) -> Unit
     ): Int = withContext(Dispatchers.IO) {
-        val allChunks = dao.getAllChunks()
-        if (allChunks.isEmpty()) return@withContext 0
+        // One file's chunks are loaded at a time, so re-indexing a large library never holds the whole table.
+        val fileUris = dao.getIndexedFilesDirect()
+        if (fileUris.isEmpty()) return@withContext 0
 
-        val groupedByFile = allChunks.groupBy { it.fileUri }
         var updatedChunks = 0
 
-        groupedByFile.entries.forEachIndexed { idx, entry ->
-            val uri = entry.key
-            val chunks = entry.value
+        fileUris.forEachIndexed { idx, uri ->
+            val chunks = dao.getChunksForFile(uri)
+            if (chunks.isEmpty()) return@forEachIndexed
             val fileName = chunks.firstOrNull()?.fileName ?: "Document"
 
-            onProgress(idx + 1, groupedByFile.size, fileName)
+            onProgress(idx + 1, fileUris.size, fileName)
 
             val texts = chunks.map { it.chunkText }
             val tagged = modelManager.embedBatchTagged(texts, isQuery = false, batchSize = 8)

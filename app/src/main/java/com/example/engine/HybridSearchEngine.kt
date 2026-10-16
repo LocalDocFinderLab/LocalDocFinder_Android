@@ -45,6 +45,10 @@ class HybridSearchEngine(
     companion object {
         private const val RRF_K = 60.0
         private const val SNIPPET_WINDOW = 220
+        /** Stays below SQLite's 999 bound-variable limit on older Android versions. */
+        private const val SQL_BATCH = 500
+        private val WHITESPACE = Regex("""\s+""")
+        private val NON_WORD = Regex("""[^\w\s]""")
     }
 
     suspend fun search(
@@ -58,26 +62,14 @@ class HybridSearchEngine(
     ): List<SearchResult> = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
         val cleanQuery = query.trim()
+        val tagActive = !filterTag.isNullOrBlank() && !filterTag.equals("All", ignoreCase = true)
         if (cleanQuery.isEmpty()) {
-            if (filterTag.isNullOrBlank() || filterTag.equals("All", ignoreCase = true)) {
-                return@withContext emptyList()
-            }
-            // Return chunks matching the selected tag directly
-            val matchingUris = dao.getFileUrisForTag(filterTag).toSet()
-            val allChunks = dao.getAllChunks()
-            val filtered = allChunks.filter { chunk ->
-                matchingUris.contains(chunk.fileUri) ||
-                        chunk.tags.split(",").map { it.trim() }.any { it.equals(filterTag, ignoreCase = true) }
-            }
-            val uniqueUris = filtered.map { it.fileUri }.distinct()
-            val tagsByUri = HashMap<String, List<String>>()
-            for (uri in uniqueUris) {
-                tagsByUri[uri] = dao.getTagsForFile(uri)
-            }
+            if (!tagActive) return@withContext emptyList()
+            // No query: list the chunks carrying the selected tag.
+            val filtered = chunksWithTag(filterTag!!)
+            val tagsByUri = loadTags(filtered.map { it.fileUri }.distinct())
             val latency = System.currentTimeMillis() - startTime
             val rawResults = filtered.map { chunk ->
-                val resolvedTags = tagsByUri[chunk.fileUri]?.takeIf { it.isNotEmpty() }
-                    ?: if (chunk.tags.isNotBlank()) chunk.tags.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
                 SearchResult(
                     chunkId = chunk.id,
                     fileUri = chunk.fileUri,
@@ -91,7 +83,7 @@ class HybridSearchEngine(
                     ftsRank = null,
                     rrfScore = 1.0f,
                     latencyMs = latency,
-                    tags = resolvedTags,
+                    tags = resolveTags(chunk, tagsByUri),
                     timestamp = chunk.timestamp,
                     fileSize = chunk.chunkText.length.toLong()
                 )
@@ -101,112 +93,86 @@ class HybridSearchEngine(
                 .take(topK)
         }
 
-        // 1. Vector Search Pipeline
-        // KEYWORD callers can opt out of the full-corpus vector scan (semanticScoring = false) and instead
-        // re-rank just the FTS candidates by cosine similarity themselves (see MainViewModel).
-        val scanVectors = mode != SearchMode.KEYWORD || semanticScoring
-        val queryEmbedding = when {
-            !scanVectors -> FloatArray(0)
-            unifiedModelManager != null -> unifiedModelManager.embedText(cleanQuery, isQuery = true)
-            else -> embeddingEngine.embedText(cleanQuery)
-        }
-        val allChunks = if (scanVectors) dao.getAllChunks() else emptyList()
-        val corpusSize = if (scanVectors) allChunks.size else dao.getTotalChunksCountDirect()
+        val corpusSize = dao.getTotalChunksCountDirect()
         if (corpusSize == 0) return@withContext emptyList()
 
-        // Only chunks embedded by the model that produced the query vector are comparable; the rest score 0
-        // here and are still found by keyword search until they are re-indexed.
-        // Without a model manager (a bare engine) there are no model tags to enforce, so everything is compared.
-        val queryModelId: String? = unifiedModelManager?.effectiveModelId()
-
-        val vectorRanked = ArrayList<Pair<DocumentChunkEntity, Float>>(allChunks.size)
-        for (chunk in allChunks) {
-            val sameModel = queryModelId == null || com.example.engine.extraction.ChunkMetadata.model(chunk.metadata) == queryModelId
-            val sim = if (sameModel) {
-                val chunkVec = VectorSimilarityUtils.byteArrayToFloatArray(chunk.embeddingBlob)
-                if (chunkVec.isNotEmpty() && chunkVec.size == queryEmbedding.size) {
-                    VectorSimilarityUtils.calculateCosineSimilarity(queryEmbedding, chunkVec)
-                } else {
-                    0f
-                }
-            } else {
-                0f
-            }
-            vectorRanked.add(Pair(chunk, sim))
-        }
-        vectorRanked.sortByDescending { it.second }
-
-        // Vector rank lookup map (chunkId -> rank 1..N)
-        val vectorRankMap = HashMap<Long, Int>(vectorRanked.size)
-        val vectorSimMap = HashMap<Long, Float>(vectorRanked.size)
-        for (i in vectorRanked.indices) {
-            val (c, sim) = vectorRanked[i]
-            vectorRankMap[c.id] = i + 1
-            vectorSimMap[c.id] = sim
-        }
-
-        // 2. FTS Keyword Pipeline
+        // 1. FTS keyword pipeline (runs first so the vector scan knows which keyword hits it must score).
         val ftsResults = executeFtsQuery(cleanQuery)
         val ftsRankMap = HashMap<Long, Int>(ftsResults.size)
         for (i in ftsResults.indices) {
             ftsRankMap[ftsResults[i].id] = i + 1
         }
 
-        // 3. Score calculation based on mode
-        val queryTokens = extractQueryKeywords(cleanQuery)
-        val latency = System.currentTimeMillis() - startTime
-
-        val candidateChunks = HashMap<Long, DocumentChunkEntity>()
-        when (mode) {
-            SearchMode.VECTOR -> {
-                for (item in vectorRanked.take(topK)) {
-                    candidateChunks[item.first.id] = item.first
-                }
+        // 2. Vector pipeline: stream the embeddings in small pages and keep only the best matches (plus the
+        // similarity of every keyword hit), rather than loading each chunk's text and vector into memory.
+        // KEYWORD callers can opt out of the scan (semanticScoring = false) and re-rank the FTS hits themselves.
+        val scanVectors = mode != SearchMode.KEYWORD || semanticScoring
+        val vectorKeep = when (mode) {
+            SearchMode.VECTOR -> topK
+            SearchMode.HYBRID -> topK * 2
+            SearchMode.KEYWORD -> 0
+        }
+        val scan: VectorScanResult? = if (scanVectors) {
+            val queryEmbedding = if (unifiedModelManager != null) {
+                unifiedModelManager.embedText(cleanQuery, isQuery = true)
+            } else {
+                embeddingEngine.embedText(cleanQuery)
             }
-            SearchMode.KEYWORD -> {
-                for (item in ftsResults.take(topK)) {
-                    candidateChunks[item.id] = item
-                }
-            }
-            SearchMode.HYBRID -> {
-                // Union candidates from Top-K vector and Top-K FTS
-                for (item in vectorRanked.take(topK * 2)) {
-                    candidateChunks[item.first.id] = item.first
-                }
-                for (item in ftsResults.take(topK * 2)) {
-                    candidateChunks[item.id] = item
-                }
-            }
+            // Only chunks embedded by the model that produced the query vector are comparable; the rest score 0
+            // and are still found by keyword search until they are re-indexed. Without a model manager (a bare
+            // engine) there are no model tags to enforce, so everything is compared.
+            VectorScanner.scan(
+                query = queryEmbedding,
+                modelId = unifiedModelManager?.effectiveModelId(),
+                topK = vectorKeep,
+                wantedIds = ftsRankMap.keys,
+                expectedCount = corpusSize
+            ) { afterId, limit -> dao.getEmbeddingPage(afterId, limit) }
+        } else {
+            null
+        }
+        val simById = HashMap<Long, Float>()
+        if (scan != null) {
+            for (i in scan.topIds.indices) simById[scan.topIds[i]] = scan.topSims[i]
+            simById.putAll(scan.wantedSims)
         }
 
+        // 3. Candidate selection based on mode
+        val queryTokens = extractQueryKeywords(cleanQuery)
+        val candidateChunks = LinkedHashMap<Long, DocumentChunkEntity>()
+        val vectorIds = if (mode != SearchMode.KEYWORD && scan != null) scan.topIds.toList() else emptyList()
+        if (vectorIds.isNotEmpty()) {
+            for (chunk in loadChunksByIds(vectorIds)) candidateChunks[chunk.id] = chunk
+        }
+        val ftsTake = when (mode) {
+            SearchMode.VECTOR -> 0
+            SearchMode.KEYWORD -> topK
+            SearchMode.HYBRID -> topK * 2
+        }
+        for (item in ftsResults.take(ftsTake)) {
+            candidateChunks[item.id] = item
+        }
         val rawCandidates = candidateChunks.values.toList()
 
         // Filter by tag if requested
-        val filteredCandidates = if (!filterTag.isNullOrBlank() && !filterTag.equals("All", ignoreCase = true)) {
-            val matchingUris = dao.getFileUrisForTag(filterTag).toSet()
-            rawCandidates.filter { chunk ->
-                matchingUris.contains(chunk.fileUri) ||
-                        chunk.tags.split(",").map { it.trim() }.any { it.equals(filterTag, ignoreCase = true) }
-            }
+        val filteredCandidates = if (tagActive) {
+            val tag = filterTag!!
+            val matchingUris = dao.getFileUrisForTag(tag).toSet()
+            rawCandidates.filter { chunk -> matchingUris.contains(chunk.fileUri) || chunkTextHasTag(chunk, tag) }
         } else {
             rawCandidates
         }
 
-        // Preload tags map for unique candidate fileUris
-        val uniqueUris = filteredCandidates.map { it.fileUri }.distinct()
-        val tagsByUri = HashMap<String, List<String>>()
-        for (uri in uniqueUris) {
-            val dbTags = dao.getTagsForFile(uri)
-            tagsByUri[uri] = dbTags
-        }
+        val tagsByUri = loadTags(filteredCandidates.map { it.fileUri }.distinct())
 
         // Calculate BM25 relevance scores for candidate chunks
         val bm25ScoresMap = calculateBm25Scores(filteredCandidates, queryTokens, corpusSize)
+        val latency = System.currentTimeMillis() - startTime
 
         val results = filteredCandidates.map { chunk ->
-            val vRank = vectorRankMap[chunk.id]
+            val cosineSim = simById[chunk.id] ?: 0f
+            val vRank = scan?.takeIf { simById.containsKey(chunk.id) }?.rankOf(chunk.id, cosineSim)
             val fRank = ftsRankMap[chunk.id]
-            val cosineSim = vectorSimMap[chunk.id] ?: 0f
             val bm25Score = bm25ScoresMap[chunk.id] ?: 0f
 
             val rrfScore = when (mode) {
@@ -225,19 +191,13 @@ class HybridSearchEngine(
                 SearchMode.KEYWORD -> bm25Score
             }
 
-            val snippet = generateHighlightedSnippet(chunk.chunkText, queryTokens)
-
-            // Resolve tags for this chunk's document
-            val resolvedTags = tagsByUri[chunk.fileUri]?.takeIf { it.isNotEmpty() }
-                ?: if (chunk.tags.isNotBlank()) chunk.tags.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
-
             SearchResult(
                 chunkId = chunk.id,
                 fileUri = chunk.fileUri,
                 fileName = chunk.fileName,
                 chunkIndex = chunk.chunkIndex,
                 chunkText = chunk.chunkText,
-                snippet = snippet,
+                snippet = generateHighlightedSnippet(chunk.chunkText, queryTokens),
                 highlightedTerms = queryTokens,
                 cosineSimilarity = cosineSim,
                 vectorRank = vRank,
@@ -246,7 +206,7 @@ class HybridSearchEngine(
                 bm25Score = bm25Score,
                 combinedScore = combinedScore,
                 latencyMs = latency,
-                tags = resolvedTags,
+                tags = resolveTags(chunk, tagsByUri),
                 timestamp = chunk.timestamp,
                 fileSize = chunk.chunkText.length.toLong()
             )
@@ -256,6 +216,44 @@ class HybridSearchEngine(
             .apply(results)
             .take(topK)
     }
+
+    /** Chunks of every file tagged [tag], plus chunks whose own `tags` column mentions it, in id order. */
+    private suspend fun chunksWithTag(tag: String): List<DocumentChunkEntity> {
+        val byId = HashMap<Long, DocumentChunkEntity>()
+        for (batch in dao.getFileUrisForTag(tag).chunked(SQL_BATCH)) {
+            for (chunk in dao.getChunksForFiles(batch)) byId[chunk.id] = chunk
+        }
+        for (chunk in dao.getChunksWithTagText(tag)) {
+            if (chunkTextHasTag(chunk, tag)) byId[chunk.id] = chunk
+        }
+        return byId.values.sortedBy { it.id }
+    }
+
+    private fun chunkTextHasTag(chunk: DocumentChunkEntity, tag: String): Boolean =
+        chunk.tags.split(",").map { it.trim() }.any { it.equals(tag, ignoreCase = true) }
+
+    private suspend fun loadChunksByIds(ids: List<Long>): List<DocumentChunkEntity> {
+        val byId = HashMap<Long, DocumentChunkEntity>(ids.size)
+        for (batch in ids.chunked(SQL_BATCH)) {
+            for (chunk in dao.getChunksByIds(batch)) byId[chunk.id] = chunk
+        }
+        // Keep the vector ranking order.
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /** Tags of many files in as few queries as possible (instead of one query per file). */
+    private suspend fun loadTags(fileUris: List<String>): Map<String, List<String>> {
+        if (fileUris.isEmpty()) return emptyMap()
+        val tags = HashMap<String, MutableList<String>>()
+        for (batch in fileUris.chunked(SQL_BATCH)) {
+            for (row in dao.getTagsForFiles(batch)) tags.getOrPut(row.fileUri) { ArrayList() }.add(row.tag)
+        }
+        return tags
+    }
+
+    private fun resolveTags(chunk: DocumentChunkEntity, tagsByUri: Map<String, List<String>>): List<String> =
+        tagsByUri[chunk.fileUri]?.takeIf { it.isNotEmpty() }
+            ?: if (chunk.tags.isNotBlank()) chunk.tags.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
 
     /**
      * Calculates SQLite FTS BM25 relevance scores for candidate document chunks given a search query.
@@ -277,7 +275,7 @@ class HybridSearchEngine(
         val docLengths = HashMap<Long, Int>(chunks.size)
         var totalLength = 0L
         for (chunk in chunks) {
-            val words = chunk.chunkText.split(Regex("""\s+""")).filter { it.isNotBlank() }.size
+            val words = chunk.chunkText.split(WHITESPACE).count { it.isNotBlank() }
             val len = max(words, 1)
             docLengths[chunk.id] = len
             totalLength += len
@@ -379,8 +377,8 @@ class HybridSearchEngine(
 
     private fun sanitizeFtsQuery(raw: String): String {
         val words = raw.trim()
-            .replace(Regex("""[^\w\s]"""), " ")
-            .split(Regex("""\s+"""))
+            .replace(NON_WORD, " ")
+            .split(WHITESPACE)
             .filter { it.length >= 2 }
         if (words.isEmpty()) return ""
         // FTS syntax: "word1"* OR "word2"*
@@ -389,8 +387,8 @@ class HybridSearchEngine(
 
     private fun extractQueryKeywords(query: String): List<String> {
         return query.lowercase(Locale.ROOT)
-            .replace(Regex("""[^\w\s]"""), " ")
-            .split(Regex("""\s+"""))
+            .replace(NON_WORD, " ")
+            .split(WHITESPACE)
             .filter { it.length >= 2 }
     }
 
