@@ -37,10 +37,14 @@ data class FileNameEntry(
     val timestamp: Long
 )
 
-/** How many of a file's chunks carry page info and how many were made after text recognition (OCR) ran. */
+/**
+ * How many of a file's chunks carry page info, were made after text recognition (OCR) ran, and were read by
+ * the Office readers.
+ */
 data class FileExtractionStamp(
     val pageChunks: Int,
-    val ocrChunks: Int
+    val ocrChunks: Int,
+    val officeChunks: Int
 )
 
 /**
@@ -152,7 +156,8 @@ interface DocumentChunkDao {
 
     @Query(
         "SELECT COALESCE(SUM(CASE WHEN metadata LIKE '%page=%' THEN 1 ELSE 0 END), 0) AS pageChunks, " +
-            "COALESCE(SUM(CASE WHEN metadata LIKE '%ocr=1%' THEN 1 ELSE 0 END), 0) AS ocrChunks " +
+            "COALESCE(SUM(CASE WHEN metadata LIKE '%ocr=1%' THEN 1 ELSE 0 END), 0) AS ocrChunks, " +
+            "COALESCE(SUM(CASE WHEN metadata LIKE '%office=1%' THEN 1 ELSE 0 END), 0) AS officeChunks " +
             "FROM documents WHERE fileUri = :fileUri"
     )
     suspend fun getFileExtractionStamp(fileUri: String): FileExtractionStamp

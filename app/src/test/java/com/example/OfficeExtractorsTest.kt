@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.engine.extraction.ChunkMetadata
 import com.example.engine.office.CompoundFile
 import com.example.engine.office.LegacyExcelExtractor
 import com.example.engine.office.LegacyOfficeText
@@ -110,5 +111,17 @@ class OfficeExtractorsTest {
         assertEquals(LegacyOfficeText.Kind.OTHER, LegacyOfficeText.sniff("a,b,c\n1,2,3".toByteArray()))
         // A workbook saved with a .doc extension is still read as a workbook.
         assertTrue(LegacyOfficeText.extractCompound(bytes("budget.xls"), "doc").contains("Sheet: Expenses"))
+    }
+
+    @Test
+    fun readerFlagsSurviveModelChangesSoFilesAreReadAgainOnlyOnce() {
+        val old = ChunkMetadata.encode(modelId = "bge_small_en_v15")
+        assertFalse(ChunkMetadata.office(old))
+        val upgraded = ChunkMetadata.withFlags(old, ocr = false, office = true)
+        assertTrue(ChunkMetadata.office(upgraded))
+        val reembedded = ChunkMetadata.withModel(upgraded, "minilm_l6_v2")
+        assertTrue(ChunkMetadata.office(reembedded))
+        assertEquals("minilm_l6_v2", ChunkMetadata.model(reembedded))
+        assertEquals(upgraded, ChunkMetadata.withFlags(upgraded, ocr = false, office = true))
     }
 }

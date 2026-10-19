@@ -44,7 +44,8 @@ PDF / DOCX / TXT / …            TextExtractionService          DocumentParser 
 
 `.doc`/`.xls`/`.ppt` share a small OLE2 container reader (`CompoundFile`). The real format is detected from the
 file's first bytes, so a `.doc` that is really RTF, an `.xls` that is really an HTML table or CSV export, and
-renamed Open XML files are all read correctly. Encrypted files and pre-97 formats are skipped.
+renamed Open XML files are all read correctly. Encrypted files and pre-97 formats are skipped. Office files indexed
+by an older version (which read them as plain text) are read again on the next full indexing run.
 
 **Pictures** (photos of receipts, screenshots, whiteboards) are read with ML Kit's bundled text recognizer
 (`ImageTextRecognizer`): the model ships inside the APK, runs offline and no pixels leave the phone. The indexed

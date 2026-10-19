@@ -330,7 +330,14 @@ class DocumentPreparationService : Service() {
                             hash = c.hash,
                             timestamp = if (prepared.lastModified > 0) prepared.lastModified else System.currentTimeMillis(),
                             embeddingBlob = blob,
-                            metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId, prepared.ocrAttempted)
+                            metadata = com.example.engine.extraction.ChunkMetadata.encode(
+                                c.page,
+                                c.pageEnd,
+                                tagged.modelId,
+                                prepared.ocrAttempted,
+                                prepared.fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) in
+                                    com.example.engine.extraction.ChunkMetadata.OFFICE_READER_EXTENSIONS
+                            )
                         )
                     )
                 }

@@ -290,16 +290,21 @@ class DocumentRepository(
     }
 
     /**
-     * True for an up-to-date file that was indexed before text recognition existed and could gain text from
-     * it: any picture, or a PDF that had no text layer (its chunks carry no page numbers).
+     * True for an up-to-date file whose stored text came from an older, weaker reader and should be read
+     * again once: a picture or text-less PDF indexed before text recognition existed, or a .doc/.xls/.ppt/.xlsx
+     * file indexed before the Office readers existed (it was read as plain text).
      */
-    private suspend fun needsTextRecognition(fileName: String, fileUri: String): Boolean {
+    private suspend fun needsReextraction(fileName: String, fileUri: String): Boolean {
         val ext = fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
         val isImage = ext in com.example.engine.ImageMetadataExtractor.IMAGE_EXTENSIONS
-        if (!isImage && ext != "pdf") return false
+        val isOffice = ext in com.example.engine.extraction.ChunkMetadata.OFFICE_READER_EXTENSIONS
+        if (!isImage && !isOffice && ext != "pdf") return false
         val stamp = try { dao.getFileExtractionStamp(fileUri) } catch (_: Throwable) { return false }
-        if (stamp.ocrChunks > 0) return false
-        return isImage || stamp.pageChunks == 0
+        return when {
+            isOffice -> stamp.officeChunks == 0
+            stamp.ocrChunks > 0 -> false
+            else -> isImage || stamp.pageChunks == 0
+        }
     }
 
     /**
@@ -330,7 +335,7 @@ class DocumentRepository(
             val stamp = try { dao.getFileIndexStamp(fileUri) } catch (_: Throwable) { null }
             if (stamp != null) {
                 val lastIndexed = stamp.lastIndexed
-                if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed && !needsTextRecognition(fileName, fileUri)) {
+                if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed && !needsReextraction(fileName, fileUri)) {
                     onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
                     return@withContext IndexDocResult(
                         fileName = fileName,
@@ -367,6 +372,8 @@ class DocumentRepository(
                 }
 
                 val parsed = (parseResult as ParseResult.Success).document
+                val readByOfficeReader = parsed.fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) in
+                    com.example.engine.extraction.ChunkMetadata.OFFICE_READER_EXTENSIONS
                 val existingChunks = try { dao.getChunksForFile(parsed.fileUri) } catch (_: Throwable) { emptyList() }
                 val existingHashMap = existingChunks.associateBy { it.hash }
 
@@ -380,11 +387,7 @@ class DocumentRepository(
                 for (chunk in chunksToProcess) {
                     val existing = existingHashMap[chunk.hash]
                     if (existing != null) {
-                        val metadata = if (parsed.ocrAttempted) {
-                            com.example.engine.extraction.ChunkMetadata.withOcr(existing.metadata)
-                        } else {
-                            existing.metadata
-                        }
+                        val metadata = com.example.engine.extraction.ChunkMetadata.withFlags(existing.metadata, parsed.ocrAttempted, readByOfficeReader)
                         finalEntities.add(existing.copy(timestamp = fileTimestamp, metadata = metadata))
                     } else {
                         chunksToEmbed.add(chunk)
@@ -424,7 +427,7 @@ class DocumentRepository(
                                     hash = c.hash,
                                     timestamp = fileTimestamp,
                                     embeddingBlob = blob,
-                                    metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId, parsed.ocrAttempted)
+                                    metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId, parsed.ocrAttempted, readByOfficeReader)
                                 )
                             )
                         }
