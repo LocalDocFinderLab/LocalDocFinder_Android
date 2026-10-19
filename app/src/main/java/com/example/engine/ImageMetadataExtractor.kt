@@ -72,38 +72,10 @@ class ImageMetadataExtractor(private val context: Context) {
             }
         } catch (_: Exception) {}
 
-        // Synthesize rich, semantic natural language text for vector embedding
+        // Plain-language photo details for keyword and vector search. The file name is matched separately
+        // by the ranker, so it isn't repeated here.
         val sb = StringBuilder()
-        sb.append("Image: $fileName. ")
-
-        val cleanName = fileName.substringBeforeLast('.')
-            .replace('_', ' ')
-            .replace('-', ' ')
-            .replace('.', ' ')
-        sb.append("Visual content and tags: $cleanName picture photo image graphics. ")
-
-        val fullTextContext = "$fileName $cleanName $description $userComment ${uri.toString()}".lowercase()
-
-        // Check for Colorado location in text keywords or EXIF GPS bounding box
-        val isColoradoKeywords = fullTextContext.contains("colorado") ||
-                fullTextContext.contains("denver") ||
-                fullTextContext.contains("aspen") ||
-                fullTextContext.contains("boulder") ||
-                fullTextContext.contains("vail") ||
-                fullTextContext.contains("rockies") ||
-                fullTextContext.contains("rocky mountain") ||
-                fullTextContext.contains("colorado springs") ||
-                fullTextContext.contains("breckenridge") ||
-                fullTextContext.contains("pikes peak") ||
-                fullTextContext.contains("red rocks")
-
-        val isColoradoGps = lat != null && lon != null &&
-                (lat in 37.0..41.0) && (lon in -109.05..-102.05)
-
-        if (isColoradoKeywords || isColoradoGps) {
-            sb.append("Location: Colorado, United States. Rocky Mountains, mountain scenery, nature, outdoor landscape, travel destination, USA. ")
-        }
-
+        sb.append("Photo. ")
         if (!description.isNullOrBlank()) {
             sb.append("Description: $description. ")
         }
@@ -126,9 +98,6 @@ class ImageMetadataExtractor(private val context: Context) {
         if (lat != null && lon != null) {
             val df = DecimalFormat("#.####")
             sb.append("Geotagged GPS coordinates: ${df.format(lat)}, ${df.format(lon)}. ")
-            if (!isColoradoKeywords && !isColoradoGps) {
-                sb.append("Geographic location photo. ")
-            }
         }
         if (!iso.isNullOrBlank()) {
             sb.append("ISO sensitivity: $iso. ")

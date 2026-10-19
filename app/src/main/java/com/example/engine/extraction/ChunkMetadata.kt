@@ -7,29 +7,39 @@ package com.example.engine.extraction
  *  - `model`: id of the embedding model that produced the chunk's vector. Vectors from different models
  *    live in unrelated spaces and must never be compared, so search only scores chunks whose model matches.
  *  - `page` / `pageEnd`: source PDF page range.
+ *  - `ocr=1`: the file's text was read with text recognition (pictures, scanned PDFs); files indexed before
+ *    OCR existed lack it and are read again once.
  */
 object ChunkMetadata {
 
     private const val MODEL = "model"
     private const val PAGE = "page"
     private const val PAGE_END = "pageEnd"
+    private const val OCR = "ocr"
 
     /** `model` is written first so SQL can match it with a simple prefix test (see the DAO). */
-    fun encode(page: Int? = null, pageEnd: Int? = null, modelId: String? = null): String {
-        val parts = ArrayList<String>(3)
+    fun encode(page: Int? = null, pageEnd: Int? = null, modelId: String? = null, ocr: Boolean = false): String {
+        val parts = ArrayList<String>(4)
         if (!modelId.isNullOrBlank()) parts.add("$MODEL=$modelId")
         if (page != null && page > 0) {
             parts.add("$PAGE=$page")
             pageEnd?.takeIf { it > page }?.let { parts.add("$PAGE_END=$it") }
         }
+        if (ocr) parts.add("$OCR=1")
         return parts.joinToString(";")
     }
 
     fun forPages(page: Int?, pageEnd: Int?): String = encode(page, pageEnd)
 
-    /** Returns [metadata] with its model id set to [modelId], keeping any page info. */
+    /** Returns [metadata] with its model id set to [modelId], keeping any page and OCR info. */
     fun withModel(metadata: String, modelId: String): String =
-        encode(page(metadata), pageEnd(metadata), modelId)
+        encode(page(metadata), pageEnd(metadata), modelId, ocr(metadata))
+
+    /** Returns [metadata] marked as produced after text recognition ran. */
+    fun withOcr(metadata: String): String =
+        if (ocr(metadata)) metadata else encode(page(metadata), pageEnd(metadata), model(metadata), ocr = true)
+
+    fun ocr(metadata: String): Boolean = rawValue(metadata, OCR) == "1"
 
     fun model(metadata: String): String? = rawValue(metadata, MODEL)?.takeIf { it.isNotEmpty() }
 

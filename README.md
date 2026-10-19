@@ -29,7 +29,14 @@ PDF / DOCX / TXT / …            TextExtractionService          DocumentParser 
    cannot run on Android because it needs `java.awt` / `javax.xml.stream`). Reading order is preserved, paragraph
    breaks are kept, and the PDF's title/author metadata is read.
 2. If PDFBox rejects the file, the built-in stream scanner / `PdfRenderer` extractor is used instead.
-3. A PDF with no text layer (a pure scan) is indexed by file name so it can still be found by title.
+3. A PDF with no text layer (a scan or photographed pages) is rendered page by page and read with on-device
+   text recognition (first 12 pages). If no text is found it is still indexed by file name.
+
+**Pictures** (photos of receipts, screenshots, whiteboards) are read with ML Kit's bundled text recognizer
+(`ImageTextRecognizer`): the model ships inside the APK, runs offline and no pixels leave the phone. The indexed
+text is the recognized text followed by the photo's details (camera, date, GPS), so a search can tell
+"written in the picture" from "in the photo's details". Pictures and scanned PDFs indexed by an older version are
+read again on the next full indexing run.
 
 `PageAwareChunker` then splits the pages into ~1000-character chunks (short pages are merged, long ones split on
 paragraph/sentence boundaries) and each chunk remembers its source page(s) in the `documents.metadata` column —
@@ -61,7 +68,7 @@ use; older chunks stay keyword-searchable and the model sheet shows how many nee
 | MiniLM L6 v2 | 384 | ≈23 MB | 42.0 | Apache-2.0 | fastest, smallest |
 | Built-in lightweight | 384 | — | — | — | no files needed; matches words, not meaning |
 
-No model from Google is used, and the app never downloads models itself. Model files are two files per model,
+No embedding model from Google is used (the only Google model is the bundled ML Kit OCR model, see above), and the app never downloads models itself. Model files are two files per model,
 `model.tflite` + `vocab.txt`, which arrive in one of three ways:
 
 1. **In the app:** *Indexing & Embedding Models* sheet → **Import model files** → pick both files.
@@ -79,9 +86,31 @@ python tools/export_embedding_model.py --self-test      # wiring check, no downl
 The script bakes in batch 1 and a fixed sequence length (256 by default), applies int8 dynamic-range quantisation,
 and checks the TFLite output against the original model before writing the files.
 
+## How search ranks results
+
+`HybridSearchEngine` gathers candidates three ways — SQLite FTS (chunks with *all* the words first, then *any*),
+every indexed **file name** (with typo tolerance), and the closest chunks by **vector** similarity — and
+`engine/search/SearchRanker` ranks them, one result per file:
+
+1. **File name** matches first: exact name, name starting with the query, all words in the name. Names are split
+   on `_ - .`, camelCase and digits, so `Q3_TaxReport2023.pdf` matches "tax report 2023".
+2. **Text** matches next: whole words only ("art" doesn't match "start"), plurals folded, the word being typed
+   matches as a prefix, small typos forgiven ("recipt" → receipt). All words beat some words; the exact phrase
+   beats scattered words; BM25 breaks ties.
+3. **Similar meaning** (vector) matches are shown only when they stand out from the rest of the collection
+   (about two standard deviations above the average similarity for that query), so unrelated files don't fill
+   the list. Word matches always rank ahead of meaning-only matches of similar strength.
+
+Each result says why it matched — *File name*, *Exact phrase*, *All words*, *Some words*, *Text in image*,
+*Photo details* or *Similar meaning* — plus how many places in the file matched and the PDF page.
+
+Optional search operators: `"exact phrase"`, `-word` (exclude), `name:word` (must be in the file name),
+`ext:pdf` / `type:image` (file type; `ext:pdf` on its own lists all PDFs, newest first).
+
 ## Tests
 
-`./gradlew testDebugUnitTest` runs the JVM/Robolectric tests, including the tokenizer-vs-Hugging-Face differential
+`./gradlew testDebugUnitTest` runs the JVM/Robolectric tests, including the search ranking rules
+(`SearchRankerTest`), the tokenizer-vs-Hugging-Face differential
 test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model manager fallback/import behaviour.
 
 ## Importing documents, labels and search highlighting

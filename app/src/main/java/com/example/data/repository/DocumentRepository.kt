@@ -290,6 +290,19 @@ class DocumentRepository(
     }
 
     /**
+     * True for an up-to-date file that was indexed before text recognition existed and could gain text from
+     * it: any picture, or a PDF that had no text layer (its chunks carry no page numbers).
+     */
+    private suspend fun needsTextRecognition(fileName: String, fileUri: String): Boolean {
+        val ext = fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
+        val isImage = ext in com.example.engine.ImageMetadataExtractor.IMAGE_EXTENSIONS
+        if (!isImage && ext != "pdf") return false
+        val stamp = try { dao.getFileExtractionStamp(fileUri) } catch (_: Throwable) { return false }
+        if (stamp.ocrChunks > 0) return false
+        return isImage || stamp.pageChunks == 0
+    }
+
+    /**
      * Safely indexes a document with detailed progress and error reporting.
      */
     suspend fun indexDocumentSafely(
@@ -317,7 +330,7 @@ class DocumentRepository(
             val stamp = try { dao.getFileIndexStamp(fileUri) } catch (_: Throwable) { null }
             if (stamp != null) {
                 val lastIndexed = stamp.lastIndexed
-                if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed) {
+                if (lastIndexed != null && stamp.chunkCount > 0 && sourceModified <= lastIndexed && !needsTextRecognition(fileName, fileUri)) {
                     onSubProgress?.invoke("Already up to date: $fileName", 100, 100)
                     return@withContext IndexDocResult(
                         fileName = fileName,
@@ -367,7 +380,12 @@ class DocumentRepository(
                 for (chunk in chunksToProcess) {
                     val existing = existingHashMap[chunk.hash]
                     if (existing != null) {
-                        finalEntities.add(existing.copy(timestamp = fileTimestamp))
+                        val metadata = if (parsed.ocrAttempted) {
+                            com.example.engine.extraction.ChunkMetadata.withOcr(existing.metadata)
+                        } else {
+                            existing.metadata
+                        }
+                        finalEntities.add(existing.copy(timestamp = fileTimestamp, metadata = metadata))
                     } else {
                         chunksToEmbed.add(chunk)
                     }
@@ -406,7 +424,7 @@ class DocumentRepository(
                                     hash = c.hash,
                                     timestamp = fileTimestamp,
                                     embeddingBlob = blob,
-                                    metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
+                                    metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId, parsed.ocrAttempted)
                                 )
                             )
                         }

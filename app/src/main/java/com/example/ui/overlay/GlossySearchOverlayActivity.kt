@@ -1268,7 +1268,9 @@ fun GlossySearchResultCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Chunk #${result.chunkIndex + 1}",
+                        text = com.example.engine.search.MatchSummary.describe(
+                            result.matchType, result.matchCount, result.matchedInName, result.matchedInText, result.pageLabel
+                        ).ifEmpty { "Chunk #${result.chunkIndex + 1}" },
                         color = Color(0xFF94A3B8),
                         fontSize = 10.sp
                     )

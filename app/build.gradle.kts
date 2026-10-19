@@ -91,6 +91,8 @@ dependencies {
   implementation(libs.androidx.exifinterface)
   // Apache PDFBox port for Android (Apache Tika is not usable on Android: it needs java.awt/javax.xml.stream)
   implementation(libs.pdfbox.android)
+  // On-device OCR (bundled Latin model, no network): reads text in photos, screenshots and scanned PDFs.
+  implementation(libs.mlkit.text.recognition)
   implementation(libs.tensorflow.lite)
   implementation(libs.tensorflow.lite.gpu)
   implementation(libs.tensorflow.lite.gpu.api)

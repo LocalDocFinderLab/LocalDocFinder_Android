@@ -74,7 +74,8 @@ class DocumentPreparationService : Service() {
         val fileSize: Long,
         val lastModified: Long,
         val fullText: String,
-        val chunks: List<PreparedChunk>
+        val chunks: List<PreparedChunk>,
+        val ocrAttempted: Boolean = false
     )
 
     sealed interface PreparationResult {
@@ -198,7 +199,8 @@ class DocumentPreparationService : Service() {
                 fileSize = docFile.length(),
                 lastModified = docFile.lastModified(),
                 fullText = parsed.fullText,
-                chunks = preparedChunks
+                chunks = preparedChunks,
+                ocrAttempted = parsed.ocrAttempted
             )
         )
     }
@@ -328,7 +330,7 @@ class DocumentPreparationService : Service() {
                             hash = c.hash,
                             timestamp = if (prepared.lastModified > 0) prepared.lastModified else System.currentTimeMillis(),
                             embeddingBlob = blob,
-                            metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId)
+                            metadata = com.example.engine.extraction.ChunkMetadata.encode(c.page, c.pageEnd, tagged.modelId, prepared.ocrAttempted)
                         )
                     )
                 }

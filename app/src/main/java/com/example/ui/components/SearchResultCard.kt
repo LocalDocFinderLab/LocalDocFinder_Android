@@ -184,8 +184,15 @@ fun SearchResultCard(
                         } else {
                             formatRrfScore(result.rrfScore)
                         }
+                        val matchSummary = com.example.engine.search.MatchSummary.describe(
+                            result.matchType, result.matchCount, result.matchedInName, result.matchedInText, result.pageLabel
+                        )
                         Text(
-                            text = "Chunk #${result.chunkIndex + 1} • $scoreDesc$dateFormatted",
+                            text = if (matchSummary.isNotEmpty()) {
+                                "$matchSummary$dateFormatted"
+                            } else {
+                                "Chunk #${result.chunkIndex + 1} • $scoreDesc$dateFormatted"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

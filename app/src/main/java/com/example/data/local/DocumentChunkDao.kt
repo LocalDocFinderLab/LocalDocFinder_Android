@@ -29,6 +29,20 @@ data class IndexedFileStamp(
     val lastIndexed: Long
 )
 
+/** One row per indexed file: its first chunk id, name and newest timestamp. Used to match file names. */
+data class FileNameEntry(
+    val id: Long,
+    val fileUri: String,
+    val fileName: String,
+    val timestamp: Long
+)
+
+/** How many of a file's chunks carry page info and how many were made after text recognition (OCR) ran. */
+data class FileExtractionStamp(
+    val pageChunks: Int,
+    val ocrChunks: Int
+)
+
 /**
  * Lightweight projection for document browsing without loading massive embeddingBlobs into CursorWindow.
  */
@@ -124,6 +138,24 @@ interface DocumentChunkDao {
 
     @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id IN (:chunkIds)")
     suspend fun getEmbeddingsForChunkIds(chunkIds: List<Long>): List<ChunkEmbeddingRow>
+
+    /** Every chunk's vector without its text, for the semantic scan (much lighter than [getAllChunks]). */
+    @Query("SELECT id, embeddingBlob, metadata FROM documents")
+    suspend fun getAllEmbeddingRows(): List<ChunkEmbeddingRow>
+
+    @Query("SELECT * FROM documents WHERE id IN (:chunkIds)")
+    suspend fun getChunksByIds(chunkIds: List<Long>): List<DocumentChunkEntity>
+
+    /** SQLite returns the other columns from the row that holds MIN(id), i.e. the file's first chunk. */
+    @Query("SELECT MIN(id) AS id, fileUri, fileName, MAX(timestamp) AS timestamp FROM documents GROUP BY fileUri")
+    suspend fun getFileNameEntries(): List<FileNameEntry>
+
+    @Query(
+        "SELECT COALESCE(SUM(CASE WHEN metadata LIKE '%page=%' THEN 1 ELSE 0 END), 0) AS pageChunks, " +
+            "COALESCE(SUM(CASE WHEN metadata LIKE '%ocr=1%' THEN 1 ELSE 0 END), 0) AS ocrChunks " +
+            "FROM documents WHERE fileUri = :fileUri"
+    )
+    suspend fun getFileExtractionStamp(fileUri: String): FileExtractionStamp
 
     /**
      * Number of chunks whose vector was NOT produced by [modelId] (including chunks indexed before models

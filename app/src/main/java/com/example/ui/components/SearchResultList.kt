@@ -154,12 +154,16 @@ fun SearchResultRow(
                         maxLines = 1
                     )
                     Text(
-                        text = buildString {
-                            append("Chunk #${result.chunkIndex + 1}")
-                            if (result.cosineSimilarity > 0f) {
-                                append(" • Semantic ${(result.cosineSimilarity * 100).toInt()}%")
+                        text = com.example.engine.search.MatchSummary.describe(
+                            result.matchType, result.matchCount, result.matchedInName, result.matchedInText, result.pageLabel
+                        ).ifEmpty {
+                            buildString {
+                                append("Chunk #${result.chunkIndex + 1}")
+                                if (result.cosineSimilarity > 0f) {
+                                    append(" • Semantic ${(result.cosineSimilarity * 100).toInt()}%")
+                                }
+                                append(" • BM25 %.2f".format(result.bm25Score))
                             }
-                            append(" • BM25 %.2f".format(result.bm25Score))
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -172,7 +176,7 @@ fun SearchResultRow(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
                 ) {
                     Text(
-                        text = "FTS MATCH",
+                        text = result.matchType.label.ifEmpty { "FTS MATCH" }.uppercase(Locale.ROOT),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,

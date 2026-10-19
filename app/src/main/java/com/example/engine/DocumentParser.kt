@@ -28,7 +28,9 @@ data class ParsedDocument(
     val fileName: String,
     val mimeType: String?,
     val fullText: String,
-    val chunks: List<ParsedChunk>
+    val chunks: List<ParsedChunk>,
+    /** Text recognition (OCR) was run on this file, whether or not it found text (pictures, scanned PDFs). */
+    val ocrAttempted: Boolean = false
 )
 
 data class ParsedChunk(
@@ -90,6 +92,7 @@ class DocumentParser(
     }
 
     private val imageMetadataExtractor = ImageMetadataExtractor(context)
+    private val imageTextRecognizer by lazy { com.example.engine.extraction.ImageTextRecognizer(context) }
     val chatParser = ChatParser()
 
     private val textExtraction by lazy { com.example.engine.extraction.TextExtractionService(context) }
@@ -532,13 +535,28 @@ class DocumentParser(
 
         val fullText: String
         var pdfPages: List<com.example.engine.extraction.ExtractedPage>? = null
+        var ocrAttempted = false
         try {
             fullText = when {
-                ext in ImageMetadataExtractor.IMAGE_EXTENSIONS -> imageMetadataExtractor.extractMetadata(uri, name).semanticDescription
+                ext in ImageMetadataExtractor.IMAGE_EXTENSIONS -> {
+                    ocrAttempted = true
+                    com.example.engine.extraction.ImageText.compose(
+                        imageTextRecognizer.recognize(uri),
+                        imageMetadataExtractor.extractMetadata(uri, name).semanticDescription
+                    )
+                }
                 ext == "pdf" -> {
                     val extracted = textExtraction.extractPdf(uri)
                     if (extracted.isEmpty) {
-                        pdfTitleFallback(uri)
+                        // No text layer (a scan or photographed pages): read the rendered pages with OCR.
+                        ocrAttempted = true
+                        val scanned = imageTextRecognizer.recognizePdfPages(uri)
+                        if (scanned.isNotEmpty()) {
+                            pdfPages = scanned
+                            scanned.joinToString("\n\n") { it.text }
+                        } else {
+                            pdfTitleFallback(uri)
+                        }
                     } else {
                         pdfPages = extracted.pages
                         extracted.fullText
@@ -578,7 +596,8 @@ class DocumentParser(
                 fileName = name,
                 mimeType = docFile.type,
                 fullText = fullText,
-                chunks = chunks
+                chunks = chunks,
+                ocrAttempted = ocrAttempted
             )
         )
     }
