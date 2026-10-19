@@ -32,6 +32,20 @@ PDF / DOCX / TXT / …            TextExtractionService          DocumentParser 
 3. A PDF with no text layer (a scan or photographed pages) is rendered page by page and read with on-device
    text recognition (first 12 pages). If no text is found it is still indexed by file name.
 
+**Office files** (`engine/office/`, plain Kotlin, no Apache POI):
+
+| Format | How it is read |
+|---|---|
+| `.docx`, `.pptx` | Open XML text runs (slides in numeric order) |
+| `.xlsx` | Shared strings + sheet XML, one line per row: `Sheet: Expenses` / `Rent \| 1200` |
+| `.doc` | Word 97–2003 piece table (`LegacyWordExtractor`); field codes dropped, table cells separated by `\|` |
+| `.xls` | Excel 97–2003 BIFF8 records (`LegacyExcelExtractor`), incl. formula results; same layout as `.xlsx` |
+| `.ppt` | PowerPoint 97–2003 text atoms (`LegacyPowerPointExtractor`): slides, text boxes, notes |
+
+`.doc`/`.xls`/`.ppt` share a small OLE2 container reader (`CompoundFile`). The real format is detected from the
+file's first bytes, so a `.doc` that is really RTF, an `.xls` that is really an HTML table or CSV export, and
+renamed Open XML files are all read correctly. Encrypted files and pre-97 formats are skipped.
+
 **Pictures** (photos of receipts, screenshots, whiteboards) are read with ML Kit's bundled text recognizer
 (`ImageTextRecognizer`): the model ships inside the APK, runs offline and no pixels leave the phone. The indexed
 text is the recognized text followed by the photo's details (camera, date, GPS), so a search can tell
@@ -110,7 +124,8 @@ Optional search operators: `"exact phrase"`, `-word` (exclude), `name:word` (mus
 ## Tests
 
 `./gradlew testDebugUnitTest` runs the JVM/Robolectric tests, including the search ranking rules
-(`SearchRankerTest`), the tokenizer-vs-Hugging-Face differential
+(`SearchRankerTest`), the Office readers against LibreOffice-written `.doc`/`.xls`/`.ppt`/`.rtf` files
+(`OfficeExtractorsTest`), the tokenizer-vs-Hugging-Face differential
 test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model manager fallback/import behaviour.
 
 ## Importing documents, labels and search highlighting

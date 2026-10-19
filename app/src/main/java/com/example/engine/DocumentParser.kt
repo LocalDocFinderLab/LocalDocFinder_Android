@@ -56,6 +56,9 @@ class DocumentParser(
     companion object {
         private const val TAG = "DocumentParser"
 
+        /** .doc/.xls/.ppt files are read whole; bigger ones are skipped to protect memory. */
+        private const val MAX_LEGACY_OFFICE_BYTES = 80 * 1024 * 1024
+
         // Directories to ignore during system or root tree scanning (internal OS and temporary caches)
         val IGNORED_DIRECTORY_NAMES = setOf(
             "lost.dir", "proc", "sys", "system", "vendor", "dev", "etc",
@@ -564,6 +567,8 @@ class DocumentParser(
                 }
                 ext == "docx" -> extractTextFromDocx(uri)
                 ext == "pptx" -> extractTextFromPptx(uri)
+                ext == "xlsx" -> openStreamSafe(uri).use { com.example.engine.office.XlsxExtractor.extract(it) }
+                ext == "doc" || ext == "xls" || ext == "ppt" -> extractLegacyOffice(uri, ext)
                 ext == "html" || ext == "htm" -> extractTextFromHtml(uri)
                 else -> extractPlainText(uri)
             }
@@ -690,6 +695,60 @@ class DocumentParser(
     }
 
     /**
+     * Text of a pre-2007 Office file. The real format is taken from the file's first bytes, since `.doc`,
+     * `.xls` and `.ppt` files are often RTF, HTML, CSV or renamed Open XML files.
+     */
+    private fun extractLegacyOffice(uri: Uri, ext: String): String {
+        val head = openStreamSafe(uri).use { stream ->
+            val buf = ByteArray(512)
+            var n = 0
+            while (n < buf.size) {
+                val r = stream.read(buf, n, buf.size - n)
+                if (r < 0) break
+                n += r
+            }
+            buf.copyOf(n)
+        }
+        return when (com.example.engine.office.LegacyOfficeText.sniff(head)) {
+            com.example.engine.office.LegacyOfficeText.Kind.COMPOUND -> {
+                val bytes = readCapped(uri, MAX_LEGACY_OFFICE_BYTES) ?: return ""
+                com.example.engine.office.LegacyOfficeText.extractCompound(bytes, ext)
+            }
+            com.example.engine.office.LegacyOfficeText.Kind.ZIP -> when (ext) {
+                "doc" -> extractTextFromDocx(uri)
+                "ppt" -> extractTextFromPptx(uri)
+                else -> openStreamSafe(uri).use { com.example.engine.office.XlsxExtractor.extract(it) }
+            }
+            com.example.engine.office.LegacyOfficeText.Kind.RTF -> {
+                val bytes = readCapped(uri, MAX_LEGACY_OFFICE_BYTES) ?: return ""
+                com.example.engine.office.RtfExtractor.extract(bytes)
+            }
+            com.example.engine.office.LegacyOfficeText.Kind.MARKUP -> extractTextFromHtml(uri)
+            com.example.engine.office.LegacyOfficeText.Kind.OTHER -> extractPlainText(uri)
+        }
+    }
+
+    /** "ppt/slides/slide12.xml" -> 12 */
+    private fun slideNumber(entryName: String): Int? =
+        entryName.substringAfterLast('/').removePrefix("slide").substringBefore(".xml").toIntOrNull()
+
+    /** Whole file in memory, or null when it is larger than [max] bytes. */
+    private fun readCapped(uri: Uri, max: Int): ByteArray? = openStreamSafe(uri).use { stream ->
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(65536)
+        while (true) {
+            val n = stream.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > max) {
+                Log.w(TAG, "Skipping $uri: larger than ${max / (1024 * 1024)} MB")
+                return@use null
+            }
+        }
+        out.toByteArray()
+    }
+
+    /**
      * Extracts text from PPTX (PowerPoint Open XML) by parsing slide XML files.
      */
     private fun extractTextFromPptx(uri: Uri): String {
@@ -707,10 +766,10 @@ class DocumentParser(
                     entry = zip.nextEntry
                 }
 
-                // Sort slides by name (slide1.xml, slide2.xml, etc.)
-                slideContents.sortBy { it.first }
+                // Sort slides by number (slide2.xml before slide10.xml)
+                slideContents.sortBy { slideNumber(it.first) ?: Int.MAX_VALUE }
                 for ((name, xml) in slideContents) {
-                    val slideNum = name.substringAfter("slide").substringBefore(".xml")
+                    val slideNum = slideNumber(name) ?: (slideContents.indexOfFirst { it.first == name } + 1)
                     sb.append("--- Slide $slideNum ---\n")
                     parsePowerPointXml(xml, sb)
                     sb.append("\n\n")
