@@ -101,6 +101,8 @@ fun FtsDocumentSearchComponent(
     allTags: List<String> = emptyList(),
     onSelectTag: (String?) -> Unit = {},
     recentSearches: List<SearchHistoryEntity> = emptyList(),
+    suggestions: List<String> = emptyList(),
+    onSelectSuggestion: (String) -> Unit = {},
     onReRunSearch: (SearchHistoryEntity) -> Unit = {},
     onDeleteHistoryItem: (Long) -> Unit = {},
     onClearHistory: () -> Unit = {},
@@ -161,6 +163,26 @@ fun FtsDocumentSearchComponent(
             focusRequester = focusRequester,
             modifier = Modifier.fillMaxWidth()
         )
+
+        // Search-as-you-type suggestions (past queries, then file names); tapping one runs it.
+        if (query.isNotBlank() && suggestions.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .testTag("search_suggestions_row"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(suggestions, key = { it }) { suggestion ->
+                    FilterChip(
+                        selected = false,
+                        onClick = { onSelectSuggestion(suggestion) },
+                        label = { Text(text = suggestion, fontSize = 12.sp, maxLines = 1) },
+                        modifier = Modifier.testTag("search_suggestion_chip")
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 

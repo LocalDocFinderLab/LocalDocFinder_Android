@@ -264,6 +264,44 @@ class DocumentRepository(
         return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring)
     }
 
+    /** Documents most similar to [source], using its stored vector (see [HybridSearchEngine.findSimilar]). */
+    suspend fun findSimilarDocuments(source: SearchResult, limit: Int = 8): List<SearchResult> =
+        hybridSearchEngine.findSimilar(source.chunkId, limit)
+
+    /** Search-as-you-type suggestions drawn from past queries and indexed file names. */
+    suspend fun suggestionsFor(input: String): List<String> = withContext(Dispatchers.IO) {
+        val typed = input.trim()
+        if (typed.length < com.example.engine.SearchSuggestions.MIN_INPUT_LENGTH) return@withContext emptyList()
+        val history = searchHistoryDao.searchQueries(typed, 20)
+        // In a LIKE pattern `_` matches any one character, so spaces also match the _ - . separators in file names.
+        val names = dao.searchFileNames(typed.replace(' ', '_'), 20)
+        com.example.engine.SearchSuggestions.build(typed, history, names)
+    }
+
+    /**
+     * Groups of indexed files with identical or near-identical content. Chunks are streamed in pages and reduced
+     * to a 64-bit fingerprint of their embedding, so the scan never holds chunk text.
+     */
+    suspend fun findDuplicateDocuments(
+        threshold: Float = com.example.engine.DuplicateFinder.DEFAULT_THRESHOLD
+    ): List<com.example.engine.DuplicateGroup> = withContext(Dispatchers.IO) {
+        val canonicalUri = HashMap<String, String>()
+        val prints = ArrayList<Pair<String, Long>>()
+        var afterId = Long.MIN_VALUE
+        while (true) {
+            val page = dao.getFingerprintPage(afterId, 500)
+            if (page.isEmpty()) break
+            for (row in page) {
+                if (row.embeddingBlob.isEmpty()) continue
+                val uri = canonicalUri.getOrPut(row.fileUri) { row.fileUri }
+                prints.add(uri to com.example.engine.DuplicateFinder.fingerprint(row.embeddingBlob))
+            }
+            afterId = page.last().id
+            if (page.size < 500) break
+        }
+        com.example.engine.DuplicateFinder.find(prints, threshold)
+    }
+
     /**
      * Embeds a search query with the active embedding model (same model used for the stored chunk vectors).
      */

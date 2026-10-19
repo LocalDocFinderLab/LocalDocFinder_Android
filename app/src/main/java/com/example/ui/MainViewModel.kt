@@ -472,6 +472,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val recentSearches: StateFlow<List<com.example.data.local.SearchHistoryEntity>> = repository.recentSearches
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Search-as-you-type suggestions from past queries and indexed file names.
+    private val _suggestions = MutableStateFlow<List<String>>(emptyList())
+    val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
+
+    // Duplicate-document report: null until a scan has run (or after the sheet is closed).
+    private val _duplicateGroups = MutableStateFlow<List<com.example.engine.DuplicateGroup>?>(null)
+    val duplicateGroups: StateFlow<List<com.example.engine.DuplicateGroup>?> = _duplicateGroups.asStateFlow()
+    private val _isScanningDuplicates = MutableStateFlow(false)
+    val isScanningDuplicates: StateFlow<Boolean> = _isScanningDuplicates.asStateFlow()
+
+    /** Scans the index for identical or near-identical files. Read-only: nothing is deleted. */
+    fun scanForDuplicates() {
+        if (_isScanningDuplicates.value) return
+        viewModelScope.launch {
+            _isScanningDuplicates.value = true
+            _duplicateGroups.value = try {
+                repository.findDuplicateDocuments()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            } finally {
+                _isScanningDuplicates.value = false
+            }
+        }
+    }
+
+    fun dismissDuplicates() {
+        _duplicateGroups.value = null
+    }
+
     private val _includeChatBackups = MutableStateFlow(false)
     val includeChatBackups: StateFlow<Boolean> = _includeChatBackups.asStateFlow()
 
@@ -607,6 +638,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .distinctUntilChanged()
                 .collect { q ->
                     performSearch(q, _searchMode.value, _selectedTag.value)
+                }
+        }
+
+        // Suggestions follow the query with a short debounce; a failure just means no suggestions.
+        viewModelScope.launch {
+            _query
+                .debounce(120)
+                .distinctUntilChanged()
+                .collect { q ->
+                    _suggestions.value = try {
+                        repository.suggestionsFor(q)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
         }
 

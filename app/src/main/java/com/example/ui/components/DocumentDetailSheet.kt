@@ -6,6 +6,7 @@ import android.net.Uri
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -62,6 +64,7 @@ import com.example.data.repository.DocumentDetail
 import com.example.data.repository.DocumentRepository
 import com.example.engine.KeywordHighlighter
 import com.example.engine.SearchResult
+import com.example.engine.ShareFormatter
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -81,7 +84,8 @@ fun DocumentDetailSheet(
     repository: DocumentRepository,
     searchQuery: String,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenSimilar: (SearchResult) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -105,7 +109,21 @@ fun DocumentDetailSheet(
         isLoading = false
     }
 
+    // Other documents whose content is closest to this one (null while it is being computed).
+    var similar by remember(result.chunkId) { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(result.chunkId) {
+        similar = try {
+            repository.findSimilarDocuments(result)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     val listState = rememberLazyListState()
+    // Opening a similar document reuses this sheet, so start its content from the top.
+    LaunchedEffect(result.fileUri) { listState.scrollToItem(0) }
     // Bring the matched chunk into view once the content is loaded (items 0 and 1 are metadata + section header).
     LaunchedEffect(detail) {
         val loaded = detail ?: return@LaunchedEffect
@@ -191,7 +209,26 @@ fun DocumentDetailSheet(
                     )
                 }
                 IconButton(
-                    onClick = { openExternally(context, result.fileUri) },
+                    onClick = {
+                        val matched = detail?.chunks?.firstOrNull { it.chunkIndex == result.chunkIndex }
+                        shareExcerpt(
+                            context = context,
+                            fileName = result.fileName,
+                            pageLabel = matched?.pageLabel,
+                            text = matched?.text ?: result.chunkText,
+                            terms = result.highlightedTerms
+                        )
+                    },
+                    modifier = Modifier.testTag("detail_share_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share excerpt",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                IconButton(
+                    onClick = { openDocumentExternally(context, result.fileUri) },
                     modifier = Modifier.testTag("detail_open_external_button")
                 ) {
                     Icon(
@@ -288,9 +325,100 @@ fun DocumentDetailSheet(
                             query = searchQuery
                         )
                     }
+                    val related = similar
+                    if (related == null || related.isNotEmpty()) {
+                        item(key = "similar_documents") {
+                            SimilarDocumentsSection(similar = related, onOpen = onOpenSimilar)
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/** "More like this": the closest other documents, each opening in this same reader. */
+@Composable
+private fun SimilarDocumentsSection(
+    similar: List<SearchResult>?,
+    onOpen: (SearchResult) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp)
+            .testTag("similar_documents_section")
+    ) {
+        Text(
+            text = "Similar documents",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
+        if (similar == null) {
+            Text(
+                text = "Looking for related documents…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            return@Column
+        }
+        similar.forEach { item ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    .clickable { onOpen(item) }
+                    .padding(12.dp)
+                    .testTag("similar_document_item")
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.fileName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${(item.cosineSimilarity * 100).toInt().coerceIn(0, 100)}% similar",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    text = item.snippet,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun shareExcerpt(
+    context: Context,
+    fileName: String,
+    pageLabel: String?,
+    text: String,
+    terms: List<String>
+) {
+    try {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, fileName)
+            putExtra(Intent.EXTRA_TEXT, ShareFormatter.format(fileName, pageLabel, text, terms))
+        }
+        context.startActivity(Intent.createChooser(send, "Share excerpt").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: Exception) {
+        Toast.makeText(context, "Nothing to share this with", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -457,7 +585,8 @@ private fun DocumentContentBlock(
     }
 }
 
-private fun openExternally(context: Context, uriString: String) {
+/** Opens the original file in whichever app handles its type. */
+fun openDocumentExternally(context: Context, uriString: String) {
     try {
         val uri = Uri.parse(uriString)
         val intent = Intent(Intent.ACTION_VIEW).apply {

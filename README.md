@@ -94,6 +94,20 @@ test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model mana
 * **Highlighting:** words from the search query are shown in bold with a background colour inside each excerpt
   (`engine/KeywordHighlighter.kt`).
 
+## Search internals and extras
+
+* **Search memory use:** `VectorScanner` pages the stored embeddings (keyset pagination on `id`), scores them in the
+  quantised domain and keeps a bounded top-K, so a query never loads every chunk. Full text is fetched only for the
+  final candidates and their tags in one batched query.
+* **Keyword ranking:** FTS4 hits (up to 400) are ordered by BM25 before the result cut-off, so `ftsRank` and the hybrid
+  fusion reflect relevance, not insertion order.
+* **Suggestions:** `SearchSuggestions` ranks past queries, then file names, for the chips under the search box.
+* **Similar documents:** `HybridSearchEngine.findSimilar` compares a chunk's stored vector with the others from the
+  same model and returns the best chunk of each other file. Nothing is re-embedded.
+* **Find Duplicates:** `DuplicateFinder` fingerprints each chunk by its embedding bytes and finds files with (nearly)
+  identical fingerprint sets through an inverted index. Report only; nothing is deleted.
+* **Share:** the reader's share button sends the matching excerpt with its file name and page.
+
 ## Releases
 
 Pushing a tag such as `v1.1.0` runs `.github/workflows/android-release.yml`, which builds the APK and publishes a

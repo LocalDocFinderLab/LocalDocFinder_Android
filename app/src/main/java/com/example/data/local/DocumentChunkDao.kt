@@ -17,6 +17,13 @@ data class ChunkEmbeddingRow(
     val metadata: String
 )
 
+/** A chunk's id, owning file and embedding BLOB; identical text embeds to identical bytes, so this finds copies. */
+data class ChunkFingerprintRow(
+    val id: Long,
+    val fileUri: String,
+    val embeddingBlob: ByteArray
+)
+
 /** One (file, tag) pair, so the tags of many files can be loaded with a single query. */
 data class FileTagRow(
     val fileUri: String,
@@ -137,6 +144,13 @@ interface DocumentChunkDao {
      */
     @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
     suspend fun getEmbeddingPage(afterId: Long, limit: Int): List<ChunkEmbeddingRow>
+
+    @Query("SELECT id, fileUri, embeddingBlob FROM documents WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getFingerprintPage(afterId: Long, limit: Int): List<ChunkFingerprintRow>
+
+    /** File names containing [pattern] (a LIKE pattern body, `_` matches one character), for search suggestions. */
+    @Query("SELECT DISTINCT fileName FROM documents WHERE fileName LIKE '%' || :pattern || '%' LIMIT :limit")
+    suspend fun searchFileNames(pattern: String, limit: Int): List<String>
 
     @Query("SELECT * FROM documents WHERE id IN (:chunkIds)")
     suspend fun getChunksByIds(chunkIds: List<Long>): List<DocumentChunkEntity>
