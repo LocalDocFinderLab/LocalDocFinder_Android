@@ -47,6 +47,8 @@ class HybridSearchEngine(
         private const val SNIPPET_WINDOW = 220
         /** Stays below SQLite's 999 bound-variable limit on older Android versions. */
         private const val SQL_BATCH = 500
+        /** How many keyword matches are fetched before BM25 ordering picks the best. */
+        private const val FTS_CANDIDATE_LIMIT = 400
         private val WHITESPACE = Regex("""\s+""")
         private val NON_WORD = Regex("""[^\w\s]""")
     }
@@ -97,7 +99,8 @@ class HybridSearchEngine(
         if (corpusSize == 0) return@withContext emptyList()
 
         // 1. FTS keyword pipeline (runs first so the vector scan knows which keyword hits it must score).
-        val ftsResults = executeFtsQuery(cleanQuery)
+        val queryTokens = extractQueryKeywords(cleanQuery)
+        val ftsResults = executeFtsQuery(cleanQuery, queryTokens, corpusSize)
         val ftsRankMap = HashMap<Long, Int>(ftsResults.size)
         for (i in ftsResults.indices) {
             ftsRankMap[ftsResults[i].id] = i + 1
@@ -138,7 +141,6 @@ class HybridSearchEngine(
         }
 
         // 3. Candidate selection based on mode
-        val queryTokens = extractQueryKeywords(cleanQuery)
         val candidateChunks = LinkedHashMap<Long, DocumentChunkEntity>()
         val vectorIds = if (mode != SearchMode.KEYWORD && scan != null) scan.topIds.toList() else emptyList()
         if (vectorIds.isNotEmpty()) {
@@ -358,21 +360,26 @@ class HybridSearchEngine(
         return normalizedMap
     }
 
-    private suspend fun executeFtsQuery(query: String): List<DocumentChunkEntity> {
+    /**
+     * Keyword candidates, best first. FTS4 returns matches in row order, so a wide candidate window is fetched
+     * and ordered by BM25 here; otherwise `ftsRank` would only reflect insertion order and the best matches could
+     * be cut off by the row limit before ever being ranked.
+     */
+    private suspend fun executeFtsQuery(query: String, queryTokens: List<String>, corpusSize: Int): List<DocumentChunkEntity> {
         val sanitized = sanitizeFtsQuery(query)
-        if (sanitized.isBlank()) {
-            return dao.searchFallbackLike(query)
-        }
-        return try {
-            val ftsList = dao.searchFts(sanitized)
-            if (ftsList.isEmpty()) {
-                dao.searchFallbackLike(query)
-            } else {
-                ftsList
+        val candidates = if (sanitized.isBlank()) {
+            dao.searchFallbackLike(query, FTS_CANDIDATE_LIMIT)
+        } else {
+            try {
+                dao.searchFts(sanitized, FTS_CANDIDATE_LIMIT).ifEmpty { dao.searchFallbackLike(query, FTS_CANDIDATE_LIMIT) }
+            } catch (_: Exception) {
+                dao.searchFallbackLike(query, FTS_CANDIDATE_LIMIT)
             }
-        } catch (_: Exception) {
-            dao.searchFallbackLike(query)
         }
+        if (candidates.size < 2 || queryTokens.isEmpty()) return candidates
+        val scores = calculateBm25Scores(candidates, queryTokens, corpusSize)
+        // sortedByDescending is stable, so equal scores keep their original (row) order.
+        return candidates.sortedByDescending { scores[it.id] ?: 0f }
     }
 
     private fun sanitizeFtsQuery(raw: String): String {
