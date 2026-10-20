@@ -32,32 +32,36 @@ object WhatsNew {
 
     val features: List<Item> = listOf(
         Item(
-            "Highlighted matches",
-            "Search results now show the words you searched for in bold with a coloured background, right inside the excerpt."
+            "Find files by name",
+            "Typing a file's name finds it first, even with typos or glued-together names like Q3_TaxReport2023.pdf."
         ),
         Item(
-            "Pick files and folders",
-            "Documents and folders you choose with the system picker are saved on your device, with a status for each, and can be retried or removed under Imported Documents."
+            "Better ranking",
+            "All your words beat some of them, the exact phrase beats scattered words, and unrelated \"similar meaning\" results no longer fill the list. Each file shows once."
         ),
         Item(
-            "Background text extraction",
-            "Picked files are read with PDFBox in a background task that fills the full-text search index, so you can keep using the app or close it."
+            "See why it matched",
+            "Every result says whether it matched the file name, the text, text in a picture or similar meaning, and on which PDF page."
         ),
         Item(
-            "Labels and filters",
-            "Tag documents with built-in labels (Work, Personal, Finance, Legal, Medical, Education, Receipts, Travel, Research) or your own, then filter search results by label."
+            "Text in pictures",
+            "Photos, screenshots, receipts and scanned PDFs are searchable by the text in them. Recognition runs on your phone; nothing is uploaded."
         ),
         Item(
-            "Fixed update checks",
-            "In-app updates now look at this project's GitHub releases and show the release notes."
+            "Word, Excel and PowerPoint",
+            "Old .doc, .xls and .ppt files and .xlsx spreadsheets are now read properly, including speaker notes and formula results."
+        ),
+        Item(
+            "Run indexing once",
+            "Tap Start indexing after updating so pictures, scans and Office files indexed before are read again."
         )
     )
 
     val development: List<String> = listOf(
-        "Room database moved to version 6 with a document_paths table (no data loss on upgrade).",
-        "New PdfBoxIndexWorker (WorkManager) extracts text with PDFBox and writes chunks that the SQLite FTS4 index picks up automatically.",
-        "Default embedding model is now BGE Small v1.5.",
-        "Debug APKs are built and attached to GitHub releases by a CI workflow."
+        "New search ranker (engine/search): file-name matching, whole-word BM25 with phrase and coverage scoring, calibrated vector scores, one result per file.",
+        "New Office readers (engine/office) for .doc, .xls, .xlsx, .ppt and RTF, without Apache POI.",
+        "On-device OCR with ML Kit's bundled text recognizer for images and scanned PDFs.",
+        "No database schema change; chunk metadata flags mark files that need one re-read."
     )
 }
 
