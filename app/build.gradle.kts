@@ -13,8 +13,8 @@ android {
     minSdk = 28
     targetSdk = 36
     // versionCode follows the in-app updater's tag scheme (major*10000 + minor*100 + patch), so v1.1.0 -> 10100.
-    versionCode = 10201
-    versionName = "1.2.1"
+    versionCode = 10202
+    versionName = "1.2.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
