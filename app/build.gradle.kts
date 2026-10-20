@@ -13,8 +13,8 @@ android {
     minSdk = 28
     targetSdk = 36
     // versionCode follows the in-app updater's tag scheme (major*10000 + minor*100 + patch), so v1.1.0 -> 10100.
-    versionCode = 10302
-    versionName = "1.3.2"
+    versionCode = 10400
+    versionName = "1.4.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -35,8 +35,8 @@ android {
     }
   }
 
-  // Two builds of the same code: "prod" is the app people use; "dev" is for testing on devices. It adds a
-  // Developer console (logs, what the app sends over the network, index and permission state) and the
+  // Two builds of the same code: "prod" is the app people use; "dev" is for testing on devices and is released
+  // as ONE universal APK that runs on every phone. It adds a Developer console (logs, what the app sends over the network, index and permission state) and the
   // sample-data tools. Different application ids, so both can be installed side by side.
   flavorDimensions += "channel"
   productFlavors {

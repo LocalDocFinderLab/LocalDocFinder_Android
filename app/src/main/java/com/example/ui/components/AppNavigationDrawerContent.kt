@@ -748,18 +748,16 @@ fun AppNavigationDrawerContent(
                 testTag = "drawer_pixel_optimizer"
             )
 
-            if (BuildConfig.DEV_MODE) {
-                DrawerMenuItem(
-                    icon = Icons.Default.Speed,
-                    title = "Hardware & Thermal HUD",
-                    subtitle = "${hardwareMetrics.cpuUsagePercent}% CPU • ${hardwareMetrics.availableCores} Cores • ${hardwareMetrics.memoryUsageMb} MB",
-                    onClick = {
-                        onCloseDrawer()
-                        onOpenHardwareDashboard()
-                    },
-                    testTag = "drawer_hardware_dashboard"
-                )
-            }
+            DrawerMenuItem(
+                icon = Icons.Default.Speed,
+                title = "Hardware & Thermal HUD",
+                subtitle = "${hardwareMetrics.cpuUsagePercent}% CPU • ${hardwareMetrics.availableCores} Cores • ${hardwareMetrics.memoryUsageMb} MB",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenHardwareDashboard()
+                },
+                testTag = "drawer_hardware_dashboard"
+            )
 
             // Gaming Mode Switch Item
             Surface(

@@ -32,29 +32,19 @@ object WhatsNew {
 
     val features: List<Item> = listOf(
         Item(
-            "Switching models re-indexes for you",
-            "The model card now says which one is running. When you switch (or finish downloading one), the app asks right away whether to re-index so search by meaning keeps working. No hunting for a button."
+            "See what your phone is made of",
+            "Menu → Hardware & Thermal HUD now has a \"This device\" card: your processor, CPU cores and speed, GPU and its OpenGL / Vulkan version, and your NPU / TPU (Google Tensor is recognised by generation)."
         ),
         Item(
-            "One permission prompt, up front",
-            "The app asks once for access to your files, with a plain explanation of what stays on your phone. Without it the app tells you it can't work, instead of half-working."
-        ),
-        Item(
-            "Privacy you can check",
-            "The new Privacy report shows exactly what the app has downloaded. The app can only download from Hugging Face (models) and GitHub (updates) and has no code path to upload your files or searches."
-        ),
-        Item(
-            "No more web charts",
-            "The match-quality chart used to load scripts from the internet. It is now drawn on the phone."
-        ),
-        Item(
-            "Cleaner app",
-            "Sample documents and test tools are gone from the regular app. Developers can install the separate Dev build for them."
+            "One dev build for every phone",
+            "Testers get a single universal Dev build instead of picking a processor type, and can try every feature in it side by side with the regular app."
         )
     )
 
     val development: List<String> = listOf(
-        "Two builds per release: prod (LocalDocFinder-<tag>-<abi>.apk) and dev (LocalDocFinder-<tag>-dev-<abi>.apk, application id suffix .dev, installs next to prod). BuildConfig.DEV_MODE switches the dev-only UI.",
+        "Dev build is now released as a single universal APK (no per-ABI dev APKs); the updater falls back to it automatically.",
+        "engine/DeviceHardwareInfo reads SoC (Build.SOC_*), CPU max frequency, GL renderer/version via an offscreen EGL context, Vulkan level, TFLite GPU support and NPU/TPU; shown in HardwareDashboardSheet in all builds.",
+        "Two builds per release: prod (LocalDocFinder-<tag>-<abi>.apk) and one universal dev build (LocalDocFinder-<tag>-dev-universal.apk, application id suffix .dev, installs next to prod). BuildConfig.DEV_MODE switches the dev-only UI.",
         "Dev build: Developer console (network ledger vs Android's own traffic count, app events + system log, app state, sample-data tools).",
         "privacy/NetworkGuard: every HTTP client is HTTPS-only, GET/HEAD-only with no request body, and limited to huggingface.co, hf.co, github.com and githubusercontent.com. Refusals are counted.",
         "The in-app updater only offers the APK of its own build type (prod updates to prod, dev to dev).",

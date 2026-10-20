@@ -61,15 +61,13 @@ jobs:
           fi
           ./gradlew --no-daemon :app:assembleProdRelease :app:assembleDevRelease
           mkdir -p dist
-          # prod: LocalDocFinder-<abi>.apk    dev (developer console, sample-data tools): LocalDocFinder-dev-<abi>.apk
+          # prod: LocalDocFinder-<abi>.apk    dev (developer console, sample-data tools): one universal APK only,
+          # LocalDocFinder-dev-universal.apk, so testers never have to pick a processor type
           for f in app/build/outputs/apk/prod/release/app-prod-*-release.apk; do
             abi="$(basename "$f" | sed -E 's/^app-prod-(.*)-release\.apk$/\1/')"
             cp "$f" "dist/LocalDocFinder-$abi.apk"
           done
-          for f in app/build/outputs/apk/dev/release/app-dev-*-release.apk; do
-            abi="$(basename "$f" | sed -E 's/^app-dev-(.*)-release\.apk$/\1/')"
-            cp "$f" "dist/LocalDocFinder-dev-$abi.apk"
-          done
+          cp app/build/outputs/apk/dev/release/app-dev-universal-release.apk dist/LocalDocFinder-dev-universal.apk
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -154,7 +152,7 @@ jobs:
           # A pushed tag already exists; a manual run creates the tag on this commit when the release is made.
           if [ "$EVENT" = "workflow_dispatch" ]; then TAG_FLAG="--target $GITHUB_SHA"; else TAG_FLAG="--verify-tag"; fi
           mkdir -p out
-          # prod APKs keep their names (LocalDocFinder-<tag>-<abi>.apk); dev ones become LocalDocFinder-<tag>-dev-<abi>.apk
+          # prod APKs keep their names (LocalDocFinder-<tag>-<abi>.apk); the dev one becomes LocalDocFinder-<tag>-dev-universal.apk
           for f in dist/LocalDocFinder-*.apk; do
             abi="${f#dist/LocalDocFinder-}"; abi="${abi%.apk}"
             cp "$f" "out/LocalDocFinder-${TAG}-${abi}.apk"
@@ -166,7 +164,7 @@ jobs:
           # phone) is attached on its own first; the per-processor APKs are added after it.
           UNIVERSAL="out/LocalDocFinder-${TAG}-universal.apk"
           gh release create "$TAG" "$UNIVERSAL" $TAG_FLAG --title "LocalDoc Finder ${TAG}" "${NOTE_FLAGS[@]}"
-          for abi in arm64-v8a armeabi-v7a x86_64 dev-universal dev-arm64-v8a dev-armeabi-v7a dev-x86_64; do
+          for abi in arm64-v8a armeabi-v7a x86_64 dev-universal; do
             gh release upload "$TAG" "out/LocalDocFinder-${TAG}-${abi}.apk"
           done
           gh release upload "$TAG" out/SHA256SUMS.txt

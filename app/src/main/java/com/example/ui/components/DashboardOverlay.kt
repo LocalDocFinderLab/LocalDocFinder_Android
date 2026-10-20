@@ -44,6 +44,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.example.engine.DeviceHardwareInfo
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -396,6 +401,46 @@ fun HardwareDashboardSheet(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            // What this phone is made of (processor, GPU, NPU/TPU): shown in every build
+            val appContext = LocalContext.current
+            val hw by produceState<DeviceHardwareInfo.Info?>(null) {
+                value = withContext(Dispatchers.Default) { DeviceHardwareInfo.get(appContext) }
+            }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().testTag("device_hardware_card")
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("This device", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    val info = hw
+                    if (info == null) {
+                        DetailRow(label = "Hardware", value = "Reading…")
+                    } else {
+                        DetailRow(label = "Device", value = info.device)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "Processor (SoC)", value = info.socName)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "CPU", value = info.cpuSummary)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "CPU architecture", value = info.abis)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "GPU", value = info.gpuName)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "GPU version / APIs", value = info.gpuApis)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "GPU for search", value = if (info.gpuDelegateSupported) "Supported (TFLite GPU)" else "Not supported · uses CPU")
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "NPU / TPU", value = info.npuName)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surface)
+                        DetailRow(label = "NPU / TPU version", value = info.npuDetail)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             // Engine & Indexer Details
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -446,8 +491,11 @@ private fun DetailRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = value,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = if (highlight) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
