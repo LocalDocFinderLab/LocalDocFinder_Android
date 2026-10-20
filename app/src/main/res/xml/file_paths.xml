@@ -4,4 +4,6 @@
     <files-path name="update_files" path="updates/" />
     <external-cache-path name="external_update_cache" path="updates/" />
     <external-files-path name="external_update_files" path="updates/" />
+    <!-- Lets "Open file" hand documents found on shared storage (Downloads, scanned folders) to other apps. -->
+    <root-path name="device_root" path="." />
 </paths>

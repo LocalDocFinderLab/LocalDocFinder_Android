@@ -23,7 +23,46 @@ data class HighlightedTextResult(
     val keywordFrequencies: Map<String, Int>
 )
 
+/** Keyword hits across a whole document: the total, and how often each keyword appears. */
+data class MatchCounts(
+    val total: Int,
+    val perKeyword: Map<String, Int>
+) {
+    companion object {
+        val EMPTY = MatchCounts(0, emptyMap())
+    }
+}
+
 object KeywordHighlighter {
+
+    /**
+     * Counts matches over [sections] the way [highlightText] would, without building styled text, so a long
+     * document can be counted on a background thread while only the visible parts are highlighted.
+     */
+    fun countMatches(
+        sections: List<String>,
+        keywords: List<String>,
+        query: String? = null,
+        filterKeyword: String? = null
+    ): MatchCounts {
+        val effective = extractKeywords(keywords, query)
+        if (effective.isEmpty()) return MatchCounts.EMPTY
+        var total = 0
+        val perKeyword = HashMap<String, Int>()
+        for (section in sections) {
+            if (section.isBlank()) continue
+            total += findMatches(section, effective, filterKeyword).size
+            val lower = section.lowercase(Locale.ROOT)
+            for (kw in effective) {
+                var idx = lower.indexOf(kw)
+                while (idx != -1) {
+                    perKeyword[kw] = (perKeyword[kw] ?: 0) + 1
+                    idx = lower.indexOf(kw, idx + kw.length)
+                }
+            }
+        }
+        return MatchCounts(total, perKeyword)
+    }
 
     private val STOP_WORDS = setOf(
         "a", "an", "the", "and", "or", "in", "on", "at", "to", "for",

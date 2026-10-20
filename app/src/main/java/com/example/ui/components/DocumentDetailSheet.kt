@@ -111,7 +111,8 @@ fun DocumentDetailSheet(
         val loaded = detail ?: return@LaunchedEffect
         val matchedPosition = loaded.chunks.indexOfFirst { it.chunkIndex == result.chunkIndex }
         if (matchedPosition > 0 && searchQuery.isNotBlank()) {
-            listState.animateScrollToItem(index = matchedPosition + 2)
+            // Jump instead of animating: a long animated scroll through a big document fights the user's finger.
+            listState.scrollToItem(index = matchedPosition + 2)
         }
     }
 
@@ -458,15 +459,5 @@ private fun DocumentContentBlock(
 }
 
 private fun openExternally(context: Context, uriString: String) {
-    try {
-        val uri = Uri.parse(uriString)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        Toast.makeText(context, "No external handler found for this document", Toast.LENGTH_SHORT).show()
-    }
+    DocumentOpener.open(context, uriString)
 }

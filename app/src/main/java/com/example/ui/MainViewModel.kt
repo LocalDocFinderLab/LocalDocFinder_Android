@@ -944,9 +944,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _rawSearchResults.value = results
                 _searchLatencyMs.value = System.currentTimeMillis() - start
                 if (q.isNotBlank()) {
-                    repository.recordSearchQuery(q, mode, results.size, tag)
+                    // Saving history must never throw away results that were already found.
+                    try {
+                        repository.recordSearchQuery(q, mode, results.size, tag)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        android.util.Log.w("MainViewModel", "Could not save search history: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                android.util.Log.e("MainViewModel", "Search failed for \"$q\": ${e.message}", e)
                 _rawSearchResults.value = emptyList()
             } finally {
                 _isSearching.value = false

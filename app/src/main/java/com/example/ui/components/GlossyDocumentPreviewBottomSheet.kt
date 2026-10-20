@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -85,7 +87,10 @@ import com.example.R
 import com.example.data.repository.DocumentPreviewContent
 import com.example.data.repository.DocumentRepository
 import com.example.engine.SearchResult
+import com.example.engine.MatchCounts
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 import androidx.compose.foundation.lazy.LazyRow
@@ -709,22 +714,19 @@ fun GlossyDocumentPreviewBottomSheet(
             } else {
                 // Text View with Matched Snippet and Highlighted Words
                 val fullText = previewContent?.fullText.orEmpty().ifBlank { result.chunkText }
-                val scrollState = rememberScrollState()
-
-                val effectiveKeywords = remember(result, searchQuery) {
-                    KeywordHighlighter.extractKeywords(result.highlightedTerms, searchQuery, fullText)
+                val sections = remember(previewContent, fullText) {
+                    previewContent?.sections?.takeIf { it.isNotEmpty() } ?: listOf(fullText)
                 }
 
-                val fullTextHighlightResult = remember(fullText, effectiveKeywords, selectedKeywordFilter) {
-                    KeywordHighlighter.highlightText(
-                        text = fullText,
-                        keywords = effectiveKeywords,
-                        query = searchQuery,
-                        filterKeyword = selectedKeywordFilter,
-                        highlightColor = Color(0xFF38BDF8),
-                        highlightBgColor = Color(0xFF38BDF8).copy(alpha = 0.28f),
-                        baseTextColor = Color(0xFFE2E8F0)
-                    )
+                val effectiveKeywords = remember(result, searchQuery) {
+                    KeywordHighlighter.extractKeywords(result.highlightedTerms, searchQuery, fullText.take(2_000))
+                }
+
+                // Counting walks the whole document, so it runs off the main thread and fills in when ready.
+                val matchCounts by produceState(MatchCounts.EMPTY, sections, effectiveKeywords, selectedKeywordFilter) {
+                    value = withContext(Dispatchers.Default) {
+                        KeywordHighlighter.countMatches(sections, effectiveKeywords, searchQuery, selectedKeywordFilter)
+                    }
                 }
 
                 val chunkHighlightResult = remember(result.chunkText, effectiveKeywords, selectedKeywordFilter) {
@@ -761,7 +763,7 @@ fun GlossyDocumentPreviewBottomSheet(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "⚡ Matching Keywords (${fullTextHighlightResult.totalMatchesCount} matches)",
+                                        text = "⚡ Matching Keywords (${matchCounts.total} matches)",
                                         color = Color(0xFF38BDF8),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -788,7 +790,7 @@ fun GlossyDocumentPreviewBottomSheet(
                                         FilterChip(
                                             selected = selectedKeywordFilter == null,
                                             onClick = { selectedKeywordFilter = null },
-                                            label = { Text("All (${fullTextHighlightResult.totalMatchesCount})", fontSize = 10.sp) },
+                                            label = { Text("All (${matchCounts.total})", fontSize = 10.sp) },
                                             colors = FilterChipDefaults.filterChipColors(
                                                 selectedContainerColor = Color(0xFF38BDF8).copy(alpha = 0.3f),
                                                 selectedLabelColor = Color(0xFF38BDF8)
@@ -796,7 +798,7 @@ fun GlossyDocumentPreviewBottomSheet(
                                         )
                                     }
                                     items(effectiveKeywords) { kw ->
-                                        val count = fullTextHighlightResult.keywordFrequencies[kw] ?: 0
+                                        val count = matchCounts.perKeyword[kw] ?: 0
                                         val isSelected = selectedKeywordFilter.equals(kw, ignoreCase = true)
                                         FilterChip(
                                             selected = isSelected,
@@ -862,7 +864,11 @@ fun GlossyDocumentPreviewBottomSheet(
                             Text(
                                 text = chunkHighlightResult.annotatedString,
                                 fontSize = 12.sp,
-                                lineHeight = 18.sp
+                                lineHeight = 18.sp,
+                                // Capped so a long matched chunk can't push the document text off the sheet.
+                                modifier = Modifier
+                                    .heightIn(max = 110.dp)
+                                    .verticalScroll(rememberScrollState())
                             )
                         }
                     }
@@ -884,19 +890,19 @@ fun GlossyDocumentPreviewBottomSheet(
                         color = Color(0xFF0F172A).copy(alpha = 0.5f),
                         border = BorderStroke(1.dp, Color(0xFF334155).copy(alpha = 0.6f))
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(12.dp)
-                                .verticalScroll(scrollState)
-                        ) {
-                            Text(
-                                text = fullTextHighlightResult.annotatedString,
-                                fontSize = 12.sp,
-                                lineHeight = 20.sp,
-                                fontFamily = if (ext in listOf("JSON", "XML", "CSV", "YAML", "KT", "JAVA", "PY")) FontFamily.Monospace else FontFamily.Default
-                            )
-                        }
+                        HighlightedSectionList(
+                            sections = sections,
+                            keywords = effectiveKeywords,
+                            query = searchQuery,
+                            filterKeyword = selectedKeywordFilter,
+                            highlightColor = Color(0xFF38BDF8),
+                            highlightBgColor = Color(0xFF38BDF8).copy(alpha = 0.28f),
+                            baseTextColor = Color(0xFFE2E8F0),
+                            fontSize = 12.sp,
+                            lineHeight = 20.sp,
+                            fontFamily = if (ext in listOf("JSON", "XML", "CSV", "YAML", "KT", "JAVA", "PY")) FontFamily.Monospace else FontFamily.Default,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
             }
@@ -943,15 +949,5 @@ fun GlossyDocumentPreviewBottomSheet(
 }
 
 private fun openExternalDoc(context: Context, uriString: String) {
-    try {
-        val uri = Uri.parse(uriString)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        Toast.makeText(context, "Cannot open file directly. Location: $uriString", Toast.LENGTH_SHORT).show()
-    }
+    DocumentOpener.open(context, uriString)
 }
