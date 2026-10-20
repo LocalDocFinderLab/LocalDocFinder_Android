@@ -19,7 +19,9 @@ object TextMatch {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have", "in", "into", "is", "it",
         "its", "of", "on", "or", "that", "the", "this", "to", "was", "were", "will", "with", "my", "me", "i",
         "our", "your", "about", "all", "any", "find", "show", "where", "what", "which", "file", "files",
-        "document", "documents", "doc", "docs"
+        "document", "documents", "doc", "docs",
+        // Question words, so "how do I renew my passport" is decided by "renew" and "passport".
+        "how", "why", "when", "who", "whose", "do", "does", "did", "can", "could", "should", "would", "there"
     )
 
     /** Lowercase and strip accents, so "Résumé" and "resume" compare equal (SQLite's unicode61 does the same). */

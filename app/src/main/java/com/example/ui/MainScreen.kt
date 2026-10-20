@@ -161,6 +161,7 @@ fun MainScreen(
 
     val query by viewModel.query.collectAsStateWithLifecycle()
     val searchMode by viewModel.searchMode.collectAsStateWithLifecycle()
+    val developerMode by viewModel.developerMode.collectAsStateWithLifecycle()
     val rawResults by viewModel.rawSearchResults.collectAsStateWithLifecycle()
     val results by viewModel.searchResults.collectAsStateWithLifecycle()
     val selectedFileType by viewModel.selectedFileType.collectAsStateWithLifecycle()
@@ -500,7 +501,9 @@ fun MainScreen(
                 },
                 onToggleTheme = onToggleTheme,
                 onClearDataClick = { showClearDialog = true },
-                onCloseDrawer = { scope.launch { drawerState.close() } }
+                onCloseDrawer = { scope.launch { drawerState.close() } },
+                developerMode = developerMode,
+                onToggleDeveloperMode = { viewModel.setDeveloperMode(it) }
             )
         }
     ) {
@@ -897,6 +900,7 @@ fun MainScreen(
                             onQueryChanged = { viewModel.onQueryChanged(it) },
                             searchMode = searchMode,
                             onSearchModeChanged = { viewModel.onSearchModeChanged(it) },
+                            showSearchModes = developerMode,
                             results = results,
                             rawResults = rawResults,
                             isSearching = isSearching,
@@ -1021,6 +1025,7 @@ fun MainScreen(
             vectorWeight = vectorWeight,
             bm25Weight = bm25Weight,
             onSetHybridWeights = { vW, bW -> viewModel.setHybridWeights(vW, bW) },
+            showSearchEngineOptions = developerMode,
             onSelectDatePreset = { viewModel.setDatePreset(it) },
             onSelectDateRange = { start, end -> viewModel.setDateRange(start, end) },
             onClearDateFilter = { viewModel.clearDateFilter() },

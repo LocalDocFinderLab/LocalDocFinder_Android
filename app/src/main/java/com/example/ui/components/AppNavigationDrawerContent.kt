@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -127,6 +128,8 @@ fun AppNavigationDrawerContent(
     onToggleTheme: () -> Unit,
     onClearDataClick: () -> Unit,
     onCloseDrawer: () -> Unit,
+    developerMode: Boolean = false,
+    onToggleDeveloperMode: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(
@@ -197,7 +200,7 @@ fun AppNavigationDrawerContent(
                                     }
                                 }
                                 Text(
-                                    text = if (BuildConfig.DEV_MODE) "Developer build · ${BuildConfig.VERSION_NAME}" else "Offline Vector Search Engine",
+                                    text = if (BuildConfig.DEV_MODE) "Developer build · ${BuildConfig.VERSION_NAME}" else if (developerMode) "Offline Vector Search Engine" else "Private, offline document search",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -231,18 +234,18 @@ fun AppNavigationDrawerContent(
                         ) {
                             Column {
                                 Text(
-                                    text = "Active Index",
+                                    text = if (developerMode) "Active Index" else "Searchable",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "$totalFiles docs • $totalChunks chunks",
+                                    text = if (developerMode) "$totalFiles docs • $totalChunks chunks" else "$totalFiles documents",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            Surface(
+                            if (developerMode) Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
@@ -395,7 +398,7 @@ fun AppNavigationDrawerContent(
                                             color = if (currentSortOrder == SearchSortOrder.RELEVANCE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = "RRF & semantic similarity ranking",
+                                            text = if (developerMode) "RRF & semantic similarity ranking" else "Best match first",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -517,84 +520,171 @@ fun AppNavigationDrawerContent(
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
 
             // 3. Folder & Document Indexing Section
-            DrawerSectionHeader(title = "Folder & Document Indexing")
+            if (developerMode) {
+                DrawerSectionHeader(title = "Folder & Document Indexing")
 
-            DrawerMenuItem(
-                icon = Icons.Default.Download,
-                title = "Index Downloads Folder",
-                subtitle = "Bypasses SAF restrictions to index downloads",
-                onClick = {
-                    onCloseDrawer()
-                    onIndexDownloadsClick()
-                },
-                testTag = "drawer_index_downloads"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.Download,
+                    title = "Index Downloads Folder",
+                    subtitle = "Bypasses SAF restrictions to index downloads",
+                    onClick = {
+                        onCloseDrawer()
+                        onIndexDownloadsClick()
+                    },
+                    testTag = "drawer_index_downloads"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.Folder,
-                title = "Index Android Folder",
-                subtitle = "Scans /Android & document media directories",
-                onClick = {
-                    onCloseDrawer()
-                    onIndexAndroidClick()
-                },
-                testTag = "drawer_index_android"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.Folder,
+                    title = "Index Android Folder",
+                    subtitle = "Scans /Android & document media directories",
+                    onClick = {
+                        onCloseDrawer()
+                        onIndexAndroidClick()
+                    },
+                    testTag = "drawer_index_android"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.DocumentScanner,
-                title = "Scan Entire Storage",
-                subtitle = "Auto-crawls all PDFs & documents across device",
-                onClick = {
-                    onCloseDrawer()
-                    onIndexEntireStorageClick()
-                },
-                testTag = "drawer_index_entire_storage"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.DocumentScanner,
+                    title = "Scan Entire Storage",
+                    subtitle = "Auto-crawls all PDFs & documents across device",
+                    onClick = {
+                        onCloseDrawer()
+                        onIndexEntireStorageClick()
+                    },
+                    testTag = "drawer_index_entire_storage"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.FilterList,
-                title = "Index by File Types",
-                subtitle = "Choose formats (PDFs, Word docs, Markdown, Code, Images)",
-                onClick = {
-                    onCloseDrawer()
-                    onIndexByFileTypesClick()
-                },
-                testTag = "drawer_index_by_file_types"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.FilterList,
+                    title = "Index by File Types",
+                    subtitle = "Choose formats (PDFs, Word docs, Markdown, Code, Images)",
+                    onClick = {
+                        onCloseDrawer()
+                        onIndexByFileTypesClick()
+                    },
+                    testTag = "drawer_index_by_file_types"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.FolderOpen,
-                title = "Select Folder (SAF)",
-                subtitle = "Pick custom directory with persistable access",
-                onClick = {
-                    onCloseDrawer()
-                    onPickFolderClick()
-                },
-                testTag = "drawer_pick_folder"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.FolderOpen,
+                    title = "Select Folder (SAF)",
+                    subtitle = "Pick custom directory with persistable access",
+                    onClick = {
+                        onCloseDrawer()
+                        onPickFolderClick()
+                    },
+                    testTag = "drawer_pick_folder"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.Tune,
-                title = "Pick Specific Files",
-                subtitle = "Ingest single or multiple documents directly",
-                onClick = {
-                    onCloseDrawer()
-                    onPickFilesClick()
-                },
-                testTag = "drawer_pick_files"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.Tune,
+                    title = "Pick Specific Files",
+                    subtitle = "Ingest single or multiple documents directly",
+                    onClick = {
+                        onCloseDrawer()
+                        onPickFilesClick()
+                    },
+                    testTag = "drawer_pick_files"
+                )
 
-            DrawerMenuItem(
-                icon = Icons.Default.Folder,
-                title = "Imported Documents",
-                subtitle = if (importedDocumentCount > 0) "$importedDocumentCount saved path(s) · status & retry" else "Saved paths picked with the file picker",
-                onClick = {
-                    onCloseDrawer()
-                    onOpenImportedDocuments()
-                },
-                testTag = "drawer_imported_documents"
-            )
+                DrawerMenuItem(
+                    icon = Icons.Default.Folder,
+                    title = "Imported Documents",
+                    subtitle = if (importedDocumentCount > 0) "$importedDocumentCount saved path(s) · status & retry" else "Saved paths picked with the file picker",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenImportedDocuments()
+                    },
+                    testTag = "drawer_imported_documents"
+                )
+
+                // Test-data tools: only in the dev build.
+            if (BuildConfig.DEV_MODE) {
+                DrawerMenuItem(
+                    icon = Icons.Default.PlayArrow,
+                    title = "Load Sample Knowledge Base",
+                    subtitle = "Loads AI, Distributed & Quantum technical papers",
+                    onClick = {
+                        onCloseDrawer()
+                        onLoadSampleClick()
+                    },
+                    testTag = "drawer_load_sample"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Refresh,
+                    title = "Load 100 Sample Files",
+                    subtitle = "Generates and embeds 100 test research papers",
+                    onClick = {
+                        onCloseDrawer()
+                        onLoad100SamplesClick()
+                    },
+                    testTag = "drawer_load_100_samples"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Sync,
+                    title = "Scan Monitored Folder",
+                    subtitle = "Checks auto-sync folder for newly created files",
+                    onClick = {
+                        onCloseDrawer()
+                        onScanMonitoredFolderClick()
+                    },
+                    testTag = "drawer_scan_monitored"
+                )
+            }
+
+            } else {
+                // Three ways in: everything on the phone, one folder, or a few files. Scanning the phone already
+                // covers Downloads, the Android folder and every supported file type.
+                DrawerSectionHeader(title = "Add Documents")
+
+                DrawerMenuItem(
+                    icon = Icons.Default.DocumentScanner,
+                    title = "Scan My Phone",
+                    subtitle = "Finds PDFs, documents & photos everywhere",
+                    onClick = {
+                        onCloseDrawer()
+                        onIndexEntireStorageClick()
+                    },
+                    testTag = "drawer_index_entire_storage"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.FolderOpen,
+                    title = "Choose a Folder",
+                    subtitle = "Search just one folder, kept up to date",
+                    onClick = {
+                        onCloseDrawer()
+                        onPickFolderClick()
+                    },
+                    testTag = "drawer_pick_folder"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Tune,
+                    title = "Pick Files",
+                    subtitle = "Add one or more documents",
+                    onClick = {
+                        onCloseDrawer()
+                        onPickFilesClick()
+                    },
+                    testTag = "drawer_pick_files"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Folder,
+                    title = "Added Folders & Files",
+                    subtitle = if (importedDocumentCount > 0) "$importedDocumentCount added · status & retry" else "See what you've added",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenImportedDocuments()
+                    },
+                    testTag = "drawer_imported_documents"
+                )
+            }
 
             DrawerMenuItem(
                 icon = Icons.Default.ContentCopy,
@@ -642,48 +732,12 @@ fun AppNavigationDrawerContent(
                 )
             }
 
-            // Test-data tools: only in the dev build (the prod app has nothing to "try out", it indexes your files).
-            if (BuildConfig.DEV_MODE) {
-                DrawerMenuItem(
-                    icon = Icons.Default.PlayArrow,
-                    title = "Load Sample Knowledge Base",
-                    subtitle = "Loads AI, Distributed & Quantum technical papers",
-                    onClick = {
-                        onCloseDrawer()
-                        onLoadSampleClick()
-                    },
-                    testTag = "drawer_load_sample"
-                )
-
-                DrawerMenuItem(
-                    icon = Icons.Default.Refresh,
-                    title = "Load 100 Sample Files",
-                    subtitle = "Generates and embeds 100 test research papers",
-                    onClick = {
-                        onCloseDrawer()
-                        onLoad100SamplesClick()
-                    },
-                    testTag = "drawer_load_100_samples"
-                )
-
-                DrawerMenuItem(
-                    icon = Icons.Default.Sync,
-                    title = "Scan Monitored Folder",
-                    subtitle = "Checks auto-sync folder for newly created files",
-                    onClick = {
-                        onCloseDrawer()
-                        onScanMonitoredFolderClick()
-                    },
-                    testTag = "drawer_scan_monitored"
-                )
-            }
-
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
 
             // 3. Hardware Acceleration & Gaming Mode Section
-            DrawerSectionHeader(title = "Hardware & Neural Engine")
+            DrawerSectionHeader(title = if (developerMode) "Hardware & Neural Engine" else "Performance")
 
-            DrawerMenuItem(
+            if (developerMode) DrawerMenuItem(
                 icon = Icons.Default.Memory,
                 title = "Pixel Tensor & TPU Settings",
                 subtitle = "Thermal pacing, thread pinning & benchmarks",
@@ -783,7 +837,20 @@ fun AppNavigationDrawerContent(
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
 
             // 5. Tools & App Settings Section
-            DrawerSectionHeader(title = "Tools & Diagnostics")
+            DrawerSectionHeader(title = if (developerMode) "Tools & Diagnostics" else "Settings")
+
+            if (!developerMode) {
+                DrawerMenuItem(
+                    icon = Icons.Default.AutoAwesome,
+                    title = "What's New",
+                    subtitle = "Features in this version",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenWhatsNew()
+                    },
+                    testTag = "drawer_whats_new"
+                )
+            }
 
             DrawerMenuItem(
                 icon = Icons.Default.Bolt,
@@ -822,6 +889,20 @@ fun AppNavigationDrawerContent(
                 subtitle = "Toggle app color scheme",
                 onClick = onToggleTheme,
                 testTag = "drawer_theme_toggle"
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Default.Code,
+                title = "Developer Mode",
+                subtitle = if (developerMode) "All engine options, crawlers & diagnostics" else "Show advanced search & indexing options",
+                onClick = { onToggleDeveloperMode(!developerMode) },
+                trailing = {
+                    Switch(
+                        checked = developerMode,
+                        onCheckedChange = { onToggleDeveloperMode(it) }
+                    )
+                },
+                testTag = "drawer_developer_mode"
             )
 
             DrawerMenuItem(

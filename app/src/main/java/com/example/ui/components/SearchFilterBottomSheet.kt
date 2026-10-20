@@ -97,6 +97,7 @@ fun SearchFilterBottomSheet(
     vectorWeight: Float = 0.5f,
     bm25Weight: Float = 0.5f,
     onSetHybridWeights: (Float, Float) -> Unit = { _, _ -> },
+    showSearchEngineOptions: Boolean = true,
     onSelectDatePreset: (DateRangePreset) -> Unit,
     onSelectDateRange: (Long?, Long?) -> Unit,
     onClearDateFilter: () -> Unit,
@@ -166,70 +167,73 @@ fun SearchFilterBottomSheet(
             Spacer(modifier = Modifier.height(16.dp))
 
             // 1. Search Mode Engine (Hybrid RRF / Vector KNN / Keyword FTS)
-            FilterSectionHeader(icon = Icons.Default.Search, title = "Search Engine Mode")
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SearchMode.entries.forEach { mode ->
-                    val isSelected = searchMode == mode
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { onSearchModeChanged(mode) },
-                        label = {
-                            Text(
-                                text = mode.displayName,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("sheet_chip_${mode.name.lowercase()}")
-                    )
-                }
-            }
-
-            if (searchMode == SearchMode.HYBRID) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Hybrid Ranking Weights (Vector Cosine vs BM25):",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                val weightPresets = listOf(
-                    Triple("50/50 Balanced", 0.5f, 0.5f),
-                    Triple("70% Vector / 30% BM25", 0.7f, 0.3f),
-                    Triple("30% Vector / 70% BM25", 0.3f, 0.7f),
-                    Triple("90% Vector (Semantic)", 0.9f, 0.1f),
-                    Triple("90% BM25 (Exact Keywords)", 0.1f, 0.9f)
-                )
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
+            // Developer mode only: everyone else gets the smart search, which picks the balance per query.
+            if (showSearchEngineOptions) {
+                FilterSectionHeader(icon = Icons.Default.Search, title = "Search Engine Mode")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(weightPresets) { (label, vW, bW) ->
-                        val isSelected = kotlin.math.abs(vectorWeight - vW) < 0.05f && kotlin.math.abs(bm25Weight - bW) < 0.05f
+                    SearchMode.entries.forEach { mode ->
+                        val isSelected = searchMode == mode
                         FilterChip(
                             selected = isSelected,
-                            onClick = { onSetHybridWeights(vW, bW) },
-                            label = { Text(label, fontSize = 11.sp) },
+                            onClick = { onSearchModeChanged(mode) },
+                            label = {
+                                Text(
+                                    text = mode.displayName,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("sheet_chip_${mode.name.lowercase()}")
                         )
                     }
                 }
-            }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                if (searchMode == SearchMode.HYBRID) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Hybrid Ranking Weights (Vector Cosine vs BM25):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val weightPresets = listOf(
+                        Triple("50/50 Balanced", 0.5f, 0.5f),
+                        Triple("70% Vector / 30% BM25", 0.7f, 0.3f),
+                        Triple("30% Vector / 70% BM25", 0.3f, 0.7f),
+                        Triple("90% Vector (Semantic)", 0.9f, 0.1f),
+                        Triple("90% BM25 (Exact Keywords)", 0.1f, 0.9f)
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(weightPresets) { (label, vW, bW) ->
+                            val isSelected = kotlin.math.abs(vectorWeight - vW) < 0.05f && kotlin.math.abs(bm25Weight - bW) < 0.05f
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onSetHybridWeights(vW, bW) },
+                                label = { Text(label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            }
 
             // 2. Category / Tags Filter
             if (allTags.isNotEmpty() || selectedTag != null) {

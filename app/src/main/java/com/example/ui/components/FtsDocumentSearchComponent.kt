@@ -91,6 +91,8 @@ fun FtsDocumentSearchComponent(
     onQueryChanged: (String) -> Unit,
     searchMode: SearchMode,
     onSearchModeChanged: (SearchMode) -> Unit,
+    /** Hybrid / Vector / Keyword chips; developer mode only; otherwise search picks the balance itself. */
+    showSearchModes: Boolean = true,
     results: List<SearchResult>,
     rawResults: List<SearchResult>,
     isSearching: Boolean,
@@ -198,7 +200,15 @@ fun FtsDocumentSearchComponent(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(SearchMode.entries) { mode ->
+                    if (!showSearchModes) item {
+                        Text(
+                            text = "Searches names, words & meaning",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("fts_smart_search_hint")
+                        )
+                    }
+                    if (showSearchModes) items(SearchMode.entries) { mode ->
                         val selected = searchMode == mode
                         FilterChip(
                             selected = selected,

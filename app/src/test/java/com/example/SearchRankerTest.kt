@@ -131,6 +131,31 @@ class SearchRankerTest {
         assertEquals(listOf("a.txt"), rank("\"plan draft\"", draft, final).map { it.best.fileName })
     }
 
+    @Test
+    fun wordsCloseTogetherBeatTheSameWordsScatteredButNotTheExactPhrase() {
+        // Same length and word counts, so only how close the words are tells them apart.
+        val phrase = chunk("a.txt", "Please sign the rental agreement and send " + "it back soon ".repeat(4))
+        val near = chunk("b.txt", "Please sign the agreement for this rental " + "it back soon ".repeat(4))
+        val scattered = chunk("c.txt", "Please sign the agreement it back soon " + "it back soon ".repeat(3) + "and this rental")
+        val ranked = rank("rental agreement ", scattered, near, phrase)
+        assertEquals(listOf("a.txt", "b.txt", "c.txt"), ranked.map { it.best.fileName })
+        assertEquals(MatchType.ALL_WORDS, ranked[1].matchType)
+    }
+
+    @Test
+    fun questionWordsDoNotDecideTheMatch() {
+        assertEquals(listOf("renew", "passport"), QueryParser.parse("how do I renew my passport").requiredTerms)
+        val ranked = rank("how do I renew my passport ", chunk("p.txt", "Renew your passport online in ten days."))
+        assertEquals(MatchType.ALL_WORDS, ranked.single().matchType)
+    }
+
+    @Test
+    fun fileNameTypedWithItsExtensionIsAnExactNameMatch() {
+        assertEquals(1f, SearchRanker.nameScore("Tax_Return.pdf", QueryParser.parse("tax_return.pdf")), 0f)
+        assertEquals(1f, SearchRanker.nameScore("Tax_Return.pdf", QueryParser.parse("tax return")), 0f)
+        assertEquals(0f, SearchRanker.nameScore("notes.pdf", QueryParser.parse("tax return pdf")), 0f)
+    }
+
     // --- meaning ---
 
     @Test

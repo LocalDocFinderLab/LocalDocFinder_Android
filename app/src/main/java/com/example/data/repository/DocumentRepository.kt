@@ -304,9 +304,10 @@ class DocumentRepository(
         filterTag: String? = null,
         fileTypeFilter: String? = null,
         sortOrder: com.example.engine.SearchSortOrder = com.example.engine.SearchSortOrder.RELEVANCE,
-        semanticScoring: Boolean = true
+        semanticScoring: Boolean = true,
+        semanticWeight: Float = 0.5f
     ): List<SearchResult> {
-        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring)
+        return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring, semanticWeight)
     }
 
     /** Documents most similar to [source], using its stored vector (see [HybridSearchEngine.findSimilar]). */
