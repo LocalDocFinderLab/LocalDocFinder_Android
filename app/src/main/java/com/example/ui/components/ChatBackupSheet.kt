@@ -252,19 +252,21 @@ fun ChatBackupSheet(
                     Text("Select Backup File", fontSize = 13.sp)
                 }
 
-                OutlinedButton(
-                    onClick = onSeedSampleChatBackup,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("btn_seed_sample_chat")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Science,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Load Sample Chat", fontSize = 13.sp)
+                if (com.example.BuildConfig.DEV_MODE) {
+                    OutlinedButton(
+                        onClick = onSeedSampleChatBackup,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("btn_seed_sample_chat")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Science,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Load Sample Chat", fontSize = 13.sp)
+                    }
                 }
             }
 

@@ -32,41 +32,33 @@ object WhatsNew {
 
     val features: List<Item> = listOf(
         Item(
-            "Much smaller download",
-            "Each release now has an APK for your phone's processor type, with unused code removed. In-app updates pick the right one automatically."
+            "Switching models re-indexes for you",
+            "The model card now says which one is running. When you switch (or finish downloading one), the app asks right away whether to re-index so search by meaning keeps working. No hunting for a button."
         ),
         Item(
-            "Find files by name",
-            "Typing a file's name finds it first, even with typos or glued-together names like Q3_TaxReport2023.pdf."
+            "One permission prompt, up front",
+            "The app asks once for access to your files, with a plain explanation of what stays on your phone. Without it the app tells you it can't work, instead of half-working."
         ),
         Item(
-            "Better ranking",
-            "All your words beat some of them, the exact phrase beats scattered words, and unrelated \"similar meaning\" results no longer fill the list. Each file shows once."
+            "Privacy you can check",
+            "The new Privacy report shows exactly what the app has downloaded. The app can only download from Hugging Face (models) and GitHub (updates) and has no code path to upload your files or searches."
         ),
         Item(
-            "See why it matched",
-            "Every result says whether it matched the file name, the text, text in a picture or similar meaning, and on which PDF page."
+            "No more web charts",
+            "The match-quality chart used to load scripts from the internet. It is now drawn on the phone."
         ),
         Item(
-            "Text in pictures",
-            "Photos, screenshots, receipts and scanned PDFs are searchable by the text in them. Recognition runs on your phone; nothing is uploaded."
-        ),
-        Item(
-            "Word, Excel and PowerPoint",
-            "Old .doc, .xls and .ppt files and .xlsx spreadsheets are now read properly, including speaker notes and formula results."
-        ),
-        Item(
-            "Run indexing once",
-            "Tap Start indexing after updating so pictures, scans and Office files indexed before are read again."
+            "Cleaner app",
+            "Sample documents and test tools are gone from the regular app. Developers can install the separate Dev build for them."
         )
     )
 
     val development: List<String> = listOf(
-        "Release builds are shrunk with R8 and split per processor type (arm64-v8a, armeabi-v7a, x86_64) plus a universal APK; CI smoke-tests the shrunk APK on an emulator.",
-        "New search ranker (engine/search): file-name matching, whole-word BM25 with phrase and coverage scoring, calibrated vector scores, one result per file.",
-        "New Office readers (engine/office) for .doc, .xls, .xlsx, .ppt and RTF, without Apache POI.",
-        "On-device OCR with ML Kit's bundled text recognizer for images and scanned PDFs.",
-        "No database schema change; chunk metadata flags mark files that need one re-read."
+        "Two builds per release: prod (LocalDocFinder-<tag>-<abi>.apk) and dev (LocalDocFinder-<tag>-dev-<abi>.apk, application id suffix .dev, installs next to prod). BuildConfig.DEV_MODE switches the dev-only UI.",
+        "Dev build: Developer console (network ledger vs Android's own traffic count, app events + system log, app state, sample-data tools).",
+        "privacy/NetworkGuard: every HTTP client is HTTPS-only, GET/HEAD-only with no request body, and limited to huggingface.co, hf.co, github.com and githubusercontent.com. Refusals are counted.",
+        "The in-app updater only offers the APK of its own build type (prod updates to prod, dev to dev).",
+        "Removed the unused RECORD_AUDIO permission and the WebView/CDN chart."
     )
 }
 

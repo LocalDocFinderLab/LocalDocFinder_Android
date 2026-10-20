@@ -24,6 +24,21 @@ class ApkAssetChooserTest {
     }
 
     @Test
+    fun eachBuildOnlyUpdatesToItsOwnKindOfApk() {
+        val both = listOf(
+            "LocalDocFinder-v1.3.0-universal.apk",
+            "LocalDocFinder-v1.3.0-arm64-v8a.apk",
+            "LocalDocFinder-v1.3.0-dev-universal.apk",
+            "LocalDocFinder-v1.3.0-dev-arm64-v8a.apk",
+            "SHA256SUMS.txt"
+        )
+        assertEquals(1, ApkAssetChooser.choose(both, listOf("arm64-v8a")))
+        assertEquals(3, ApkAssetChooser.choose(both, listOf("arm64-v8a"), dev = true))
+        assertEquals(2, ApkAssetChooser.choose(both, listOf("riscv64"), dev = true))
+        assertNull(ApkAssetChooser.choose(release, listOf("arm64-v8a"), dev = true))
+    }
+
+    @Test
     fun fallsBackToUniversalThenToOlderSingleApkReleases() {
         assertEquals(0, ApkAssetChooser.choose(release, listOf("riscv64")))
         assertEquals(0, ApkAssetChooser.choose(listOf("LocalDocFinder-v1.2.0.apk"), listOf("arm64-v8a")))

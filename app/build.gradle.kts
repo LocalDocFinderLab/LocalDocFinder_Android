@@ -13,8 +13,8 @@ android {
     minSdk = 28
     targetSdk = 36
     // versionCode follows the in-app updater's tag scheme (major*10000 + minor*100 + patch), so v1.1.0 -> 10100.
-    versionCode = 10202
-    versionName = "1.2.2"
+    versionCode = 10300
+    versionName = "1.3.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -32,6 +32,27 @@ android {
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
+    }
+  }
+
+  // Two builds of the same code: "prod" is the app people use; "dev" is for testing on devices. It adds a
+  // Developer console (logs, what the app sends over the network, index and permission state) and the
+  // sample-data tools. Different application ids, so both can be installed side by side.
+  flavorDimensions += "channel"
+  productFlavors {
+    create("prod") {
+      dimension = "channel"
+      buildConfigField("boolean", "DEV_MODE", "false")
+      resValue("string", "app_name", "LocalDoc Finder")
+      resValue("string", "shortcut_package", "com.aistudio.vectorsearch.dvmxqe")
+    }
+    create("dev") {
+      dimension = "channel"
+      applicationIdSuffix = ".dev"
+      versionNameSuffix = "-dev"
+      buildConfigField("boolean", "DEV_MODE", "true")
+      resValue("string", "app_name", "LocalDoc Dev")
+      resValue("string", "shortcut_package", "com.aistudio.vectorsearch.dvmxqe.dev")
     }
   }
 
@@ -56,6 +77,7 @@ android {
   buildFeatures {
     compose = true
     buildConfig = true
+    resValues = true // per-flavor app name and shortcut package (see productFlavors)
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   // One APK per processor type, so a phone downloads only the native code it can run (the OCR engine alone

@@ -285,6 +285,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _downloadProgress.value = (percent.toFloat() / 100f).coerceIn(0f, 1f)
                     _downloadStatusMessage.value = status
                 }
+                com.example.dev.DevLog.i("Model", "Download of ${model.id} finished: ${error ?: "ok"}")
                 if (error != null) {
                     _modelImportStatus.value = "Download error: $error"
                     _downloadStatusMessage.value = "Download failed: $error"
@@ -338,7 +339,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _showModelSheet.value = show
     }
 
+    /** Asked of the user when the model in use changes and part of the index was made by another model. */
+    data class ReindexPrompt(val model: com.example.engine.model.EmbeddingModelType, val staleChunks: Int)
+
+    private val _reindexPrompt = MutableStateFlow<ReindexPrompt?>(null)
+    val reindexPrompt: StateFlow<ReindexPrompt?> = _reindexPrompt.asStateFlow()
+
+    fun dismissReindexPrompt() {
+        _reindexPrompt.value = null
+    }
+
+    /**
+     * Whenever the model that indexing and search really use changes (picked in the sheet, finished
+     * downloading, imported, removed), offer to re-index right away instead of leaving the user to find the
+     * button: vectors from different models cannot be compared, so the old ones would be skipped.
+     */
+    private fun watchModelChanges() {
+        viewModelScope.launch {
+            var previous = effectiveEmbeddingModel.value
+            effectiveEmbeddingModel.collect { model ->
+                if (model == previous) return@collect
+                previous = model
+                val stale = repository.countChunksNeedingReindex(model.id)
+                if (stale > 0 && !_isReindexingModel.value) {
+                    _reindexPrompt.value = ReindexPrompt(model, stale)
+                    com.example.dev.DevLog.i("Model", "Running model is now ${model.id}; $stale chunk(s) need a re-index")
+                } else {
+                    _reindexPrompt.value = null
+                }
+            }
+        }
+    }
+
+    init {
+        watchModelChanges()
+    }
+
     fun selectEmbeddingModel(modelType: com.example.engine.model.EmbeddingModelType) {
+        if (modelType !in installedEmbeddingModels.value) {
+            // Selecting a model that isn't on the phone would silently keep running another one.
+            _modelImportStatus.value = "Download ${modelType.shortName} first; it starts running as soon as it is installed."
+            return
+        }
         repository.modelManager.setActiveModel(modelType)
         // Refresh search if query is active
         if (_query.value.isNotBlank() || _selectedTag.value != null) {
@@ -351,6 +393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isReindexingModel.value = true
         _reindexingModelProgress.value = 0.05f
         _reindexingModelStatus.value = "Starting re-indexing with ${effectiveEmbeddingModel.value.shortName}…"
+        com.example.dev.DevLog.i("Model", "Re-index started with ${effectiveEmbeddingModel.value.id}")
 
         reindexJob = viewModelScope.launch {
             try {
@@ -361,6 +404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _reindexingModelProgress.value = 1.0f
                 _reindexingModelStatus.value = "Successfully re-indexed $updatedCount chunks using ${effectiveEmbeddingModel.value.shortName}!"
+                com.example.dev.DevLog.i("Model", "Re-index finished: $updatedCount chunks")
                 delay(1200)
                 performSearch(_query.value, _searchMode.value, _selectedTag.value)
                 onComplete?.invoke(updatedCount)
@@ -1006,16 +1050,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         enqueueIndexRequest(request, "document_indexing_work")
     }
 
-    fun hasAllFilesAccess(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            android.os.Environment.isExternalStorageManager()
-        } else {
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                getApplication(),
-                android.Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-    }
+    fun hasAllFilesAccess(): Boolean = StorageAccess.hasAccess(getApplication())
 
     /**
      * Automatic initial crawl, safe to call on every app resume: each crawl type runs at most once.
@@ -1265,7 +1300,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (uri != null) {
             startIndexing(uri)
         } else {
-            loadSampleKnowledgeBase()
+            startAllIndexing()
         }
     }
 

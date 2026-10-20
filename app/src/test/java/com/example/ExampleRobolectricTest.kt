@@ -19,10 +19,11 @@ import org.robolectric.annotation.Config
 class ExampleRobolectricTest {
 
     @Test
-    fun `read string from context verifies LocalDoc Finder app name`() {
+    fun `read string from context verifies LocalDoc app name`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("LocalDoc Finder", appName)
+        // "LocalDoc Finder" for the prod build, "LocalDoc Dev" for the dev build.
+        assertTrue(appName, appName.startsWith("LocalDoc"))
     }
 
     @Test

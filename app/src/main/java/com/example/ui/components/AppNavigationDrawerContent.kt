@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -76,6 +78,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.R
 import com.example.engine.ExecutionBackend
 import com.example.engine.HardwareMetrics
@@ -106,6 +109,8 @@ fun AppNavigationDrawerContent(
     importedDocumentCount: Int = 0,
     onOpenImportedDocuments: () -> Unit = {},
     onOpenWhatsNew: () -> Unit = {},
+    onOpenPrivacyReport: () -> Unit = {},
+    onOpenDevConsole: () -> Unit = {},
     onLoadSampleClick: () -> Unit,
     onLoad100SamplesClick: () -> Unit,
     onSeedTestDocumentsClick: () -> Unit,
@@ -165,14 +170,32 @@ fun AppNavigationDrawerContent(
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "LocalDoc Finder",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (BuildConfig.DEV_MODE) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color(0xFFF59E0B),
+                                            modifier = Modifier.testTag("dev_mode_badge")
+                                        ) {
+                                            Text(
+                                                text = "DEV",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color.Black,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
                                 Text(
-                                    text = "LocalDoc Finder",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Offline Vector Search Engine",
+                                    text = if (BuildConfig.DEV_MODE) "Developer build · ${BuildConfig.VERSION_NAME}" else "Offline Vector Search Engine",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -583,37 +606,64 @@ fun AppNavigationDrawerContent(
             )
 
             DrawerMenuItem(
-                icon = Icons.Default.PlayArrow,
-                title = "Load Sample Knowledge Base",
-                subtitle = "Loads AI, Distributed & Quantum technical papers",
+                icon = Icons.Default.VerifiedUser,
+                title = "Privacy report",
+                subtitle = "What this app sends over the internet",
                 onClick = {
                     onCloseDrawer()
-                    onLoadSampleClick()
+                    onOpenPrivacyReport()
                 },
-                testTag = "drawer_load_sample"
+                testTag = "drawer_privacy_report"
             )
 
-            DrawerMenuItem(
-                icon = Icons.Default.Refresh,
-                title = "Load 100 Sample Files",
-                subtitle = "Generates and embeds 100 test research papers",
-                onClick = {
-                    onCloseDrawer()
-                    onLoad100SamplesClick()
-                },
-                testTag = "drawer_load_100_samples"
-            )
+            if (BuildConfig.DEV_MODE) {
+                DrawerMenuItem(
+                    icon = Icons.Default.BugReport,
+                    title = "Developer console",
+                    subtitle = "Network, logs, app state and test data",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenDevConsole()
+                    },
+                    testTag = "drawer_dev_console"
+                )
+            }
 
-            DrawerMenuItem(
-                icon = Icons.Default.Sync,
-                title = "Scan Monitored Folder",
-                subtitle = "Checks auto-sync folder for newly created files",
-                onClick = {
-                    onCloseDrawer()
-                    onScanMonitoredFolderClick()
-                },
-                testTag = "drawer_scan_monitored"
-            )
+            // Test-data tools: only in the dev build (the prod app has nothing to "try out", it indexes your files).
+            if (BuildConfig.DEV_MODE) {
+                DrawerMenuItem(
+                    icon = Icons.Default.PlayArrow,
+                    title = "Load Sample Knowledge Base",
+                    subtitle = "Loads AI, Distributed & Quantum technical papers",
+                    onClick = {
+                        onCloseDrawer()
+                        onLoadSampleClick()
+                    },
+                    testTag = "drawer_load_sample"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Refresh,
+                    title = "Load 100 Sample Files",
+                    subtitle = "Generates and embeds 100 test research papers",
+                    onClick = {
+                        onCloseDrawer()
+                        onLoad100SamplesClick()
+                    },
+                    testTag = "drawer_load_100_samples"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.Sync,
+                    title = "Scan Monitored Folder",
+                    subtitle = "Checks auto-sync folder for newly created files",
+                    onClick = {
+                        onCloseDrawer()
+                        onScanMonitoredFolderClick()
+                    },
+                    testTag = "drawer_scan_monitored"
+                )
+            }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
 
@@ -631,16 +681,18 @@ fun AppNavigationDrawerContent(
                 testTag = "drawer_pixel_optimizer"
             )
 
-            DrawerMenuItem(
-                icon = Icons.Default.Speed,
-                title = "Hardware & Thermal HUD",
-                subtitle = "${hardwareMetrics.cpuUsagePercent}% CPU • ${hardwareMetrics.availableCores} Cores • ${hardwareMetrics.memoryUsageMb} MB",
-                onClick = {
-                    onCloseDrawer()
-                    onOpenHardwareDashboard()
-                },
-                testTag = "drawer_hardware_dashboard"
-            )
+            if (BuildConfig.DEV_MODE) {
+                DrawerMenuItem(
+                    icon = Icons.Default.Speed,
+                    title = "Hardware & Thermal HUD",
+                    subtitle = "${hardwareMetrics.cpuUsagePercent}% CPU • ${hardwareMetrics.availableCores} Cores • ${hardwareMetrics.memoryUsageMb} MB",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenHardwareDashboard()
+                    },
+                    testTag = "drawer_hardware_dashboard"
+                )
+            }
 
             // Gaming Mode Switch Item
             Surface(

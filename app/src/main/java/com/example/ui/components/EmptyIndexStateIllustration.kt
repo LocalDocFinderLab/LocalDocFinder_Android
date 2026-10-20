@@ -363,26 +363,28 @@ fun EmptyIndexStateIllustration(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Load Sample Knowledge Base CTA
-            OutlinedButton(
-                onClick = onLoadSamplesClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("cta_load_samples_button"),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.secondary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Load Sample Knowledge Base (10 Papers)",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.secondary
-                )
+            if (com.example.BuildConfig.DEV_MODE) {
+                // Load Sample Knowledge Base CTA
+                OutlinedButton(
+                    onClick = onLoadSamplesClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cta_load_samples_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Load Sample Knowledge Base (10 Papers)",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
             }
         }
     }

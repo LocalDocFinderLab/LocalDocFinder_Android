@@ -83,9 +83,10 @@ use; older chunks stay keyword-searchable and the model sheet shows how many nee
 | MiniLM L6 v2 | 384 | ≈23 MB | 42.0 | Apache-2.0 | fastest, smallest |
 | Built-in lightweight | 384 | — | — | — | no files needed; matches words, not meaning |
 
-No embedding model from Google is used (the only Google model is the bundled ML Kit OCR model, see above), and the app never downloads models itself. Model files are two files per model,
-`model.tflite` + `vocab.txt`, which arrive in one of three ways:
+No embedding model from Google is used (the only Google model is the bundled ML Kit OCR model, see above), and the in-app **Download & Install** button fetches model files from Hugging Face (the only thing the app downloads besides its own updates). Model files are two files per model,
+`model.tflite` + `vocab.txt`, which arrive in one of four ways:
 
+0. **Download in the app:** *Indexing & Embedding Models* sheet → **Download & Install**.
 1. **In the app:** *Indexing & Embedding Models* sheet → **Import model files** → pick both files.
 2. **adb:** `adb push <model-dir> /sdcard/Android/data/com.aistudio.vectorsearch.dvmxqe/files/embedding_models/`
 3. **Bundled:** copy the folder to `app/src/main/assets/models/<model-id>/` before building.
@@ -124,7 +125,7 @@ Optional search operators: `"exact phrase"`, `-word` (exclude), `name:word` (mus
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs the JVM/Robolectric tests, including the search ranking rules
+`./gradlew testProdDebugUnitTest` runs the JVM/Robolectric tests, including the search ranking rules
 (`SearchRankerTest`), the Office readers against LibreOffice-written `.doc`/`.xls`/`.ppt`/`.rtf` files
 (`OfficeExtractorsTest`), the tokenizer-vs-Hugging-Face differential
 test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model manager fallback/import behaviour.
@@ -149,3 +150,26 @@ GitHub release with all APKs and `SHA256SUMS.txt`, using `release-notes/<tag>.md
 updater downloads the APK matching the phone's processor. The in-app updater reads
 those notes. Add `KEYSTORE_BASE64`, `STORE_PASSWORD` and `KEY_PASSWORD` (key alias `upload`) as repository secrets to
 sign with your own key so each release installs over the previous one; without them a debug key is generated per build.
+
+
+## Prod and dev builds
+
+Each release has two kinds of APK built from the same code (Gradle product flavors `prod` and `dev`):
+
+| | prod | dev |
+|---|---|---|
+| File | `LocalDocFinder-<tag>-<abi>.apk` | `LocalDocFinder-<tag>-dev-<abi>.apk` |
+| App name / id | LocalDoc Finder / `com.aistudio.vectorsearch.dvmxqe` | LocalDoc Dev / `...dvmxqe.dev` (installs next to prod) |
+| Sample documents, test tools | no | yes (Developer console → Tools) |
+| Developer console | no | yes: network ledger, logs, state |
+| Updates itself from | prod APKs | dev APKs |
+
+`BuildConfig.DEV_MODE` is the switch. Build locally with `./gradlew :app:assembleProdRelease` or `:app:assembleDevRelease`.
+
+## What leaves the phone
+
+Your files, searches and index are never sent anywhere. All HTTP goes through `privacy/NetworkGuard`, which only allows
+HTTPS `GET`/`HEAD` requests without a body to `huggingface.co`, `hf.co`, `github.com` and `githubusercontent.com`
+(model downloads and app updates), refuses everything else and counts it in `privacy/NetworkAudit`. The **Privacy report**
+in the menu shows the totals; the dev build's Developer console lists each request and compares the gate's count with
+Android's own per-app traffic counter, which would expose a library talking to the network on its own.

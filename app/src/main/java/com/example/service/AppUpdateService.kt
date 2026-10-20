@@ -42,6 +42,7 @@ class AppUpdateService : Service() {
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addNetworkInterceptor(com.example.privacy.NetworkGuard.interceptor(com.example.privacy.NetworkAudit.Purpose.APP_UPDATE))
         .build()
 
     private lateinit var checker: AppUpdateChecker

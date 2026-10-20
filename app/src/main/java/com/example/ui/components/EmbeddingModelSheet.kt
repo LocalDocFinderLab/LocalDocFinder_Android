@@ -199,7 +199,7 @@ fun EmbeddingModelSheet(
                             color = Color(0xFF10B981)
                         )
                         Text(
-                            text = "Your documents and searches never leave this phone. Models are files on your device; the app never downloads or uploads anything for them.",
+                            text = "Your documents and searches never leave this phone. The only internet use is downloading a model file when you ask for one (and checking for app updates).",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -215,7 +215,7 @@ fun EmbeddingModelSheet(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "The ${effectiveModel.shortName} model is active and running completely offline. (${activeModel.shortName} is an optional developer model that requires custom file export).",
+                        text = "${activeModel.shortName} is selected but not installed yet, so ${effectiveModel.shortName} is running for now. Download it below and it takes over automatically.",
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFF047857),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
@@ -247,7 +247,10 @@ fun EmbeddingModelSheet(
 
             // Model Selection Cards
             EmbeddingModelType.entries.forEach { model ->
-                val isSelected = activeModel == model
+                // "Running" = what indexing and search really use right now; it differs from the selection only
+                // while the selected model's files are missing.
+                val isRunning = effectiveModel == model
+                val isSelected = isRunning || activeModel == model
 
                 Surface(
                     modifier = Modifier
@@ -287,20 +290,43 @@ fun EmbeddingModelSheet(
                                 )
                             }
 
-                            if (isSelected) {
+                            if (isRunning) {
                                 Surface(
-                                    shape = CircleShape,
+                                    shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.testTag("model_running_${model.id}")
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Icon(
                                             imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
+                                            contentDescription = null,
                                             tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Running now",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary
                                         )
                                     }
+                                }
+                            } else if (activeModel == model) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = "Selected · not installed",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
                                 }
                             }
                         }
@@ -446,7 +472,11 @@ fun EmbeddingModelSheet(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = if (installed) "✓ Installed & Ready" else "Ready to download",
+                                            text = when {
+                                                isRunning -> "✓ Installed · running"
+                                                installed -> "✓ Installed · tap to use"
+                                                else -> "Ready to download"
+                                            },
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = if (installed) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
@@ -483,6 +513,12 @@ fun EmbeddingModelSheet(
                                                 fontSize = 13.sp
                                             )
                                         }
+                                        Text(
+                                            text = "One-time download from huggingface.co. After that it runs fully offline.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
                                     }
                                 }
                             }
@@ -522,6 +558,15 @@ fun EmbeddingModelSheet(
                             color = Color(0xFFB45309),
                             modifier = Modifier.testTag("stale_chunks_notice")
                         )
+                    } else {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "✓ Your index is up to date with ${effectiveModel.shortName}.",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF047857),
+                            modifier = Modifier.testTag("index_up_to_date_notice")
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -560,145 +605,151 @@ fun EmbeddingModelSheet(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Re-index Knowledge Base with ${effectiveModel.shortName}")
+                            Text(
+                                if (staleChunkCount > 0) "Re-index Knowledge Base with ${effectiveModel.shortName}"
+                                else "Re-index anyway"
+                            )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            // Model benchmarking is a developer tool.
+            if (com.example.BuildConfig.DEV_MODE) {
+                Spacer(modifier = Modifier.height(20.dp))
 
-            // Interactive Model Quality Playground
-            Text(
-                text = "Model Quality & Cosine Tester",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
+                // Interactive Model Quality Playground
+                Text(
+                    text = "Model Quality & Cosine Tester",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            OutlinedTextField(
-                value = testQuery,
-                onValueChange = { testQuery = it },
-                label = { Text("Query Concept") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                singleLine = true
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            OutlinedTextField(
-                value = testTextA,
-                onValueChange = { testTextA = it },
-                label = { Text("Candidate A (Relevant)") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            OutlinedTextField(
-                value = testTextB,
-                onValueChange = { testTextB = it },
-                label = { Text("Candidate B (Unrelated)") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        isTestingBenchmark = true
-                        val (simA, simB, lat) = onTestBenchmark(testQuery, testTextA, testTextB)
-                        testResultSimA = simA
-                        testResultSimB = simB
-                        testLatency = lat
-                        isTestingBenchmark = false
-                    }
-                },
-                enabled = !isTestingBenchmark,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("btn_test_cosine_benchmark"),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (isTestingBenchmark) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Benchmarking Vector Similarity…")
-                } else {
-                    Icon(imageVector = Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Test Model Cosine Similarity")
-                }
-            }
-
-            if (testResultSimA != null && testResultSimB != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Surface(
+                OutlinedTextField(
+                    value = testQuery,
+                    onValueChange = { testQuery = it },
+                    label = { Text("Query Concept") },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = testTextA,
+                    onValueChange = { testTextA = it },
+                    label = { Text("Candidate A (Relevant)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = testTextB,
+                    onValueChange = { testTextB = it },
+                    label = { Text("Candidate B (Unrelated)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Button(
+                    onClick = {
+                        scope.launch {
+                            isTestingBenchmark = true
+                            val (simA, simB, lat) = onTestBenchmark(testQuery, testTextA, testTextB)
+                            testResultSimA = simA
+                            testResultSimB = simB
+                            testLatency = lat
+                            isTestingBenchmark = false
+                        }
+                    },
+                    enabled = !isTestingBenchmark,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("btn_test_cosine_benchmark"),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp)
+                    if (isTestingBenchmark) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Benchmarking Vector Similarity…")
+                    } else {
+                        Icon(imageVector = Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Test Model Cosine Similarity")
+                    }
+                }
+
+                if (testResultSimA != null && testResultSimB != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "Model Test Output (${activeModel.shortName}):",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Column(
+                            modifier = Modifier.padding(14.dp)
                         ) {
                             Text(
-                                text = "Candidate A Similarity:",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "%.4f (%.1f%%)".format(testResultSimA, (testResultSimA ?: 0f) * 100f),
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = "Model Test Output (${activeModel.shortName}):",
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF10B981)
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Candidate A Similarity:",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "%.4f (%.1f%%)".format(testResultSimA, (testResultSimA ?: 0f) * 100f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981)
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Candidate B Similarity:",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "%.4f (%.1f%%)".format(testResultSimB, (testResultSimB ?: 0f) * 100f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Latency: ${testLatency ?: 0} ms • Discrimination Margin: +%.1f%%".format(((testResultSimA ?: 0f) - (testResultSimB ?: 0f)) * 100f),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Candidate B Similarity:",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "%.4f (%.1f%%)".format(testResultSimB, (testResultSimB ?: 0f) * 100f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Latency: ${testLatency ?: 0} ms • Discrimination Margin: +%.1f%%".format(((testResultSimA ?: 0f) - (testResultSimB ?: 0f)) * 100f),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
                     }
                 }
             }

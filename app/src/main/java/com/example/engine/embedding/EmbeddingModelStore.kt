@@ -148,6 +148,7 @@ class EmbeddingModelStore(private val context: Context) {
             .followSslRedirects(true)
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+            .addNetworkInterceptor(com.example.privacy.NetworkGuard.interceptor(com.example.privacy.NetworkAudit.Purpose.MODEL_DOWNLOAD))
             .build()
 
         val dir = internalDir(model)

@@ -17,6 +17,7 @@ class DocuVectorApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        com.example.privacy.NetworkAudit.init(this)
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {

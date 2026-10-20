@@ -189,6 +189,13 @@ interface DocumentChunkDao {
     )
     fun countChunksNotIndexedWith(modelId: String): Flow<Int>
 
+    /** One-shot version of [countChunksNotIndexedWith]. */
+    @Query(
+        "SELECT COUNT(*) FROM documents WHERE NOT (metadata = 'model=' || :modelId " +
+            "OR substr(metadata, 1, length(:modelId) + 7) = 'model=' || :modelId || ';')"
+    )
+    suspend fun countChunksNotIndexedWithNow(modelId: String): Int
+
     @Query("SELECT MAX(timestamp) AS lastIndexed, COUNT(*) AS chunkCount FROM documents WHERE fileUri = :fileUri")
     suspend fun getFileIndexStamp(fileUri: String): FileIndexStamp
 

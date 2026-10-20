@@ -369,21 +369,23 @@ fun IndexStatusBanner(
                             Text("Pick Folder", fontSize = 11.sp)
                         }
 
-                        OutlinedButton(
-                            onClick = onLoadSampleClick,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("load_sample_hero_button"),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Sample Files", fontSize = 11.sp)
+                        if (com.example.BuildConfig.DEV_MODE) {
+                            OutlinedButton(
+                                onClick = onLoadSampleClick,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("load_sample_hero_button"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Sample Files", fontSize = 11.sp)
+                            }
                         }
                     }
                 }
@@ -574,14 +576,16 @@ fun IndexStatusBanner(
                                             onReindexClick()
                                         }
                                     )
-                                    DropdownMenuItem(
-                                        text = { Text("Seed 100 Test Files") },
-                                        leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            onSeedTestDocumentsClick()
-                                        }
-                                    )
+                                    if (com.example.BuildConfig.DEV_MODE) {
+                                        DropdownMenuItem(
+                                            text = { Text("Seed 100 Test Files") },
+                                            leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onSeedTestDocumentsClick()
+                                            }
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = { Text("Hardware & TPU Diagnostics") },
                                         leadingIcon = { Icon(Icons.Default.Bolt, contentDescription = null) },

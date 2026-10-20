@@ -8,7 +8,7 @@
         android:shortcutLongLabel="@string/shortcut_search_long">
         <intent
             android:action="android.intent.action.VIEW"
-            android:targetPackage="com.aistudio.vectorsearch.dvmxqe"
+            android:targetPackage="@string/shortcut_package"
             android:targetClass="com.example.MainActivity">
             <extra android:name="extra_focus_search" android:value="true" />
         </intent>

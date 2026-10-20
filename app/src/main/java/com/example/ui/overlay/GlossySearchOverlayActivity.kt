@@ -1428,7 +1428,8 @@ fun GlossyEmptyState(
                 text = if (query.isNotBlank()) {
                     "Try different keywords or speak using the voice search mic above."
                 } else if (totalChunks == 0) {
-                    "No documents indexed yet. Tap below to generate instant test documents and test hybrid vector search right now!"
+                    if (com.example.BuildConfig.DEV_MODE) "No documents indexed yet. Tap below to generate instant test documents and test hybrid vector search right now!"
+                    else "No documents indexed yet. Open LocalDoc Finder to index your files, then search from here."
                 } else {
                     "Speak or type to search across $totalChunks indexed document chunks offline."
                 },
@@ -1441,7 +1442,7 @@ fun GlossyEmptyState(
             Spacer(modifier = Modifier.height(14.dp))
 
             if (totalChunks == 0) {
-                ElevatedButton(
+                if (com.example.BuildConfig.DEV_MODE) ElevatedButton(
                     onClick = onSeedSamples,
                     colors = ButtonDefaults.elevatedButtonColors(
                         containerColor = Color(0xFF6366F1),

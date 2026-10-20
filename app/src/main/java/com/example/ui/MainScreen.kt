@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -206,6 +207,7 @@ fun MainScreen(
     val reindexingModelProgress by viewModel.reindexingModelProgress.collectAsStateWithLifecycle()
     val reindexingModelStatus by viewModel.reindexingModelStatus.collectAsStateWithLifecycle()
     val showModelSheet by viewModel.showModelSheet.collectAsStateWithLifecycle()
+    val reindexPrompt by viewModel.reindexPrompt.collectAsStateWithLifecycle()
     val downloadingModel by viewModel.downloadingModel.collectAsStateWithLifecycle()
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val downloadStatusMessage by viewModel.downloadStatusMessage.collectAsStateWithLifecycle()
@@ -225,6 +227,8 @@ fun MainScreen(
     var showFilterBottomSheet by remember { mutableStateOf(false) }
     var showSearchModeInfoDialog by remember { mutableStateOf(false) }
     var showHardwareDashboard by remember { mutableStateOf(false) }
+    var showPrivacyReport by remember { mutableStateOf(false) }
+    var showDevConsole by remember { mutableStateOf(false) }
     var showChatBackupSheet by remember { mutableStateOf(false) }
     var showQuarantineDialog by remember { mutableStateOf(false) }
     var showFileTypeDialog by remember { mutableStateOf(false) }
@@ -400,37 +404,6 @@ fun MainScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        // Request standard storage permissions if they are not already granted
-        val storagePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_AUDIO,
-                Manifest.permission.READ_MEDIA_VIDEO
-            )
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-
-        val storageGranted = storagePermissions.all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-
-        if (!storageGranted && !viewModel.hasAllFilesAccess()) {
-            storagePermissionLauncher.launch(storagePermissions)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-    }
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -482,6 +455,8 @@ fun MainScreen(
                 importedDocumentCount = storedDocumentPaths.size,
                 onOpenImportedDocuments = { showImportedDocumentsSheet = true },
                 onOpenWhatsNew = { showWhatsNew = true },
+                onOpenPrivacyReport = { showPrivacyReport = true },
+                onOpenDevConsole = { showDevConsole = true },
                 onLoadSampleClick = {
                     viewModel.loadSampleKnowledgeBase()
                     Toast.makeText(context, "Loading sample technical papers…", Toast.LENGTH_SHORT).show()
@@ -739,85 +714,6 @@ fun MainScreen(
                             .padding(horizontal = 16.dp)
                     ) {
                         Spacer(modifier = Modifier.height(4.dp))
-
-                        // Storage Permission Request Banner for Android 11+ PDF & Document crawling
-                        if (!viewModel.hasAllFilesAccess() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            androidx.compose.material3.Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = androidx.compose.material3.CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                )
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.FolderOpen,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Grant Storage Permission for PDF Crawling",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Android requires 'All Files Access' to automatically scan and embed PDFs in your Downloads folder and phone storage.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        androidx.compose.material3.Button(
-                                            onClick = {
-                                                try {
-                                                    val intent = Intent(
-                                                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                                        Uri.parse("package:" + context.packageName)
-                                                    )
-                                                    context.startActivity(intent)
-                                                } catch (_: Exception) {
-                                                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                                                    context.startActivity(intent)
-                                                }
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Grant Storage Access", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-
-                                        OutlinedButton(
-                                            onClick = {
-                                                filePickerLauncher.launch(arrayOf("application/pdf", "*/*"))
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Pick PDF Files", fontSize = 11.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        }
 
                         // Safe Mode & Crash Prevention Quarantine Banner
                         AnimatedVisibility(visible = safeModeActive || quarantinedCount > 0) {
@@ -1392,6 +1288,95 @@ fun MainScreen(
         )
     }
 
+    if (showPrivacyReport) {
+        com.example.ui.components.PrivacyReportDialog(onDismiss = { showPrivacyReport = false })
+    }
+
+    // Dev build only: network ledger, logs, app state and the sample-data tools.
+    if (com.example.BuildConfig.DEV_MODE && showDevConsole) {
+        com.example.ui.components.DevConsoleSheet(
+            info = com.example.ui.components.DevConsoleInfo(
+                indexingState = indexingState.toString(),
+                totalFiles = totalFiles,
+                totalChunks = totalChunks,
+                staleChunks = staleChunkCount,
+                activeModel = activeEmbeddingModel.displayName,
+                runningModel = effectiveEmbeddingModel.displayName,
+                installedModels = installedEmbeddingModels.joinToString { it.shortName },
+                backend = backend.displayName,
+                quarantined = quarantinedCount,
+                safeMode = safeModeActive
+            ),
+            actions = com.example.ui.components.DevConsoleActions(
+                onLoadSample = {
+                    viewModel.loadSampleKnowledgeBase()
+                    Toast.makeText(context, "Loading sample knowledge base…", Toast.LENGTH_SHORT).show()
+                },
+                onLoad100Samples = {
+                    viewModel.load100SampleFiles()
+                    Toast.makeText(context, "Indexing 100 sample research papers…", Toast.LENGTH_SHORT).show()
+                },
+                onSeedTestDocuments = {
+                    viewModel.seedTestDocuments { count, path ->
+                        Toast.makeText(context, "Seeded $count documents into $path", Toast.LENGTH_LONG).show()
+                    }
+                },
+                onSeedSampleChats = {
+                    viewModel.seedSampleChatBackups()
+                    Toast.makeText(context, "Indexing sample SMS & WhatsApp chat backups…", Toast.LENGTH_SHORT).show()
+                },
+                onScanMonitoredFolder = {
+                    viewModel.triggerFolderMonitorScan { _, _, status ->
+                        Toast.makeText(context, status, Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onOpenHardwareHud = {
+                    showDevConsole = false
+                    showHardwareDashboard = true
+                },
+                onShowWhatsNew = {
+                    showDevConsole = false
+                    showWhatsNew = true
+                }
+            ),
+            onDismiss = { showDevConsole = false }
+        )
+    }
+
+    // The running model changed: offer the re-index right here instead of leaving it to a button in a sheet.
+    reindexPrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissReindexPrompt() },
+            icon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text("Re-index with ${prompt.model.shortName}?") },
+            text = {
+                Text(
+                    "You are now using ${prompt.model.displayName}. ${prompt.staleChunks} sections of your index were made " +
+                        "by a different model, so search by meaning skips them until they are re-indexed. " +
+                        "This runs on your phone only; nothing is sent anywhere and your files are not changed."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.dismissReindexPrompt()
+                        viewModel.setShowModelSheet(true)
+                        viewModel.reindexKnowledgeBaseWithActiveModel { count ->
+                            Toast.makeText(context, "Re-indexed $count sections with ${prompt.model.shortName}", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    modifier = Modifier.testTag("btn_reindex_prompt_confirm")
+                ) { Text("Re-index now") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.dismissReindexPrompt() },
+                    modifier = Modifier.testTag("btn_reindex_prompt_later")
+                ) { Text("Later") }
+            }
+        )
+    }
+
     if (showWhatsNew) {
         WhatsNewDialog(
             versionName = com.example.BuildConfig.VERSION_NAME,
@@ -1685,14 +1670,16 @@ private fun InitialQueryPrompt(
             text = if (totalChunks > 0)
                 "Type anything in the search bar above. Use the ☰ menu for folder indexing & hardware tools, or tap 'Filter & Sort' to customize results."
             else
-                "Open the ☰ Hamburger Menu to index folders, load sample papers, or manage hardware acceleration.",
+                if (com.example.BuildConfig.DEV_MODE) "Open the ☰ Hamburger Menu to index folders, load sample papers, or manage hardware acceleration."
+                else "Your files are being indexed on this phone. You can also pick folders from the ☰ menu.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 24.dp)
         )
 
-        if (totalChunks > 0) {
+        // Canned example queries only make sense for the dev build's sample documents.
+        if (totalChunks > 0 && com.example.BuildConfig.DEV_MODE) {
             Spacer(modifier = Modifier.height(20.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,

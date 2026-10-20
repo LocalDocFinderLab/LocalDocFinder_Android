@@ -26,6 +26,7 @@ class AppUpdateDownloader(
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .addNetworkInterceptor(com.example.privacy.NetworkGuard.interceptor(com.example.privacy.NetworkAudit.Purpose.APP_UPDATE))
         .build()
 ) {
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.NotStarted)

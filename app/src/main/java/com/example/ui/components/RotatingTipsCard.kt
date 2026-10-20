@@ -249,7 +249,7 @@ fun RotatingTipsCard(
                         lineHeight = 18.sp
                     )
 
-                    if (tip.sampleQuery != null && onTipClick != null) {
+                    if (tip.sampleQuery != null && onTipClick != null && com.example.BuildConfig.DEV_MODE) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Surface(
                             shape = RoundedCornerShape(8.dp),

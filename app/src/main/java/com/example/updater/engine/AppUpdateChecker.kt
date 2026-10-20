@@ -9,6 +9,7 @@ import com.example.updater.model.UpdateConfig
 import com.example.updater.model.UpdateSourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -20,6 +21,7 @@ class AppUpdateChecker(
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addNetworkInterceptor(com.example.privacy.NetworkGuard.interceptor(com.example.privacy.NetworkAudit.Purpose.APP_UPDATE))
         .build()
 ) {
 
@@ -86,7 +88,7 @@ class AppUpdateChecker(
 
             // One APK per processor type: take the one built for this phone (falls back to the universal APK).
             val names = (0 until assets.length()).map { assets.getJSONObject(it).optString("name", "") }
-            ApkAssetChooser.choose(names, android.os.Build.SUPPORTED_ABIS.toList())?.let { i ->
+            ApkAssetChooser.choose(names, android.os.Build.SUPPORTED_ABIS.toList(), dev = BuildConfig.DEV_MODE)?.let { i ->
                 val asset = assets.getJSONObject(i)
                 apkDownloadUrl = asset.optString("browser_download_url")
                 apkFileName = asset.optString("name", apkFileName)
@@ -131,6 +133,7 @@ class AppUpdateChecker(
             return UpdateCheckResult.Error("Invalid manifest URL. Must start with http:// or https://")
         }
 
+        manifestUrl.toHttpUrlOrNull()?.let { com.example.privacy.NetworkGuard.allowUserHost(it.host) }
         val request = Request.Builder()
             .url(manifestUrl)
             .header("User-Agent", "LocalDoc-Finder-Android/${BuildConfig.VERSION_NAME}")

@@ -133,6 +133,11 @@ class DocumentRepository(
     val staleChunkCount: Flow<Int> = modelManager.effectiveModel
         .flatMapLatest { model -> dao.countChunksNotIndexedWith(model.id) }
 
+    /** How many indexed chunks were not made by [modelId] and so need a re-index for semantic search. */
+    suspend fun countChunksNeedingReindex(modelId: String): Int = withContext(Dispatchers.IO) {
+        dao.countChunksNotIndexedWithNow(modelId)
+    }
+
     val totalChunksCount: Flow<Int> = dao.getTotalChunksCount()
     val totalFilesCount: Flow<Int> = dao.getTotalFilesCount()
     val indexedFiles: Flow<List<String>> = dao.getIndexedFiles()

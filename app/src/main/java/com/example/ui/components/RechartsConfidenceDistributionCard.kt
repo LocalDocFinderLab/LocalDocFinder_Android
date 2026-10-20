@@ -1,10 +1,5 @@
 package com.example.ui.components
 
-import android.annotation.SuppressLint
-import android.webkit.JavascriptInterface
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -82,8 +77,9 @@ enum class ChartDisplayMode(val label: String) {
 
 /**
  * Visualizes confidence scores of the top-k search results returned by the vector engine
- * using Recharts (embedded via responsive WebView with instant offline fallback)
- * and native Compose canvas option.
+ * with charts drawn natively on a Compose canvas. (An earlier version rendered them with Recharts in a
+ * WebView that loaded its scripts from a CDN; nothing in this app may touch the network except model
+ * downloads and update checks, so that path is gone.)
  */
 @Composable
 fun RechartsConfidenceDistributionCard(
@@ -96,7 +92,6 @@ fun RechartsConfidenceDistributionCard(
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(true) }
-    var useRechartsWebView by remember { mutableStateOf(true) }
     var selectedK by remember { mutableIntStateOf(10) }
     var chartMode by remember { mutableStateOf(if (topResults.isNotEmpty()) ChartDisplayMode.TOP_K else ChartDisplayMode.DISTRIBUTION) }
 
@@ -105,12 +100,6 @@ fun RechartsConfidenceDistributionCard(
     val topKScores = remember(topResults, selectedK) {
         extractTopKConfidenceScores(topResults, k = selectedK)
     }
-
-    val primaryColorHex = if (isDarkTheme) "#818CF8" else "#4F46E5"
-    val textColorHex = if (isDarkTheme) "#E2E8F0" else "#1E293B"
-    val mutedColorHex = if (isDarkTheme) "#94A3B8" else "#64748B"
-    val gridColorHex = if (isDarkTheme) "rgba(255,255,255,0.08)" else "rgba(0,0,0,0.06)"
-    val bgCardHex = if (isDarkTheme) "#18181B" else "#FFFFFF"
 
     // Metrics for Top-K
     val topKMaxScore = remember(topKScores) { topKScores.maxOfOrNull { it.scorePercentage } ?: 0f }
@@ -173,20 +162,6 @@ fun RechartsConfidenceDistributionCard(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            // Recharts Badge
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f)
-                            ) {
-                                Text(
-                                    text = if (useRechartsWebView) "Recharts" else "Native",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
                         }
 
                         Text(
@@ -222,21 +197,6 @@ fun RechartsConfidenceDistributionCard(
                             imageVector = if (chartMode == ChartDisplayMode.TOP_K) Icons.Default.QueryStats else Icons.Default.Leaderboard,
                             contentDescription = if (chartMode == ChartDisplayMode.TOP_K) "Switch to Distribution Histogram" else "Switch to Top-K Confidence Bar Chart",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-
-                    // Switch chart view button (Recharts Web vs Compose Native)
-                    IconButton(
-                        onClick = { useRechartsWebView = !useRechartsWebView },
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("btn_toggle_chart_view")
-                    ) {
-                        Icon(
-                            imageVector = if (useRechartsWebView) Icons.Default.BarChart else Icons.Default.Web,
-                            contentDescription = if (useRechartsWebView) "Switch to Native Canvas" else "Switch to Recharts Web",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -351,18 +311,10 @@ fun RechartsConfidenceDistributionCard(
                         }
                     }
 
-                    // Chart Container: Either Recharts WebView or Native Canvas
-                    if (useRechartsWebView) {
-                        RechartsWebViewContainer(
-                            chartMode = chartMode,
-                            topKScores = topKScores,
-                            bins = distribution.bins,
-                            isDarkTheme = isDarkTheme,
-                            primaryColor = primaryColorHex,
-                            textColor = textColorHex,
-                            mutedColor = mutedColorHex,
-                            gridColor = gridColorHex,
-                            bgCard = bgCardHex,
+                    // Chart, drawn natively (no WebView, no network)
+                    if (chartMode == ChartDisplayMode.TOP_K) {
+                        NativeTopKConfidenceCanvas(
+                            scores = topKScores,
                             onResultClick = { index ->
                                 if (index in topResults.indices) {
                                     onResultClick?.invoke(topResults[index])
@@ -370,35 +322,19 @@ fun RechartsConfidenceDistributionCard(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(180.dp)
+                                .height(170.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .testTag("recharts_webview")
+                                .testTag("native_topk_canvas")
                         )
                     } else {
-                        if (chartMode == ChartDisplayMode.TOP_K) {
-                            NativeTopKConfidenceCanvas(
-                                scores = topKScores,
-                                onResultClick = { index ->
-                                    if (index in topResults.indices) {
-                                        onResultClick?.invoke(topResults[index])
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(170.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .testTag("native_topk_canvas")
-                            )
-                        } else {
-                            NativeConfidenceCanvas(
-                                bins = distribution.bins,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(160.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .testTag("native_confidence_canvas")
-                            )
-                        }
+                        NativeConfidenceCanvas(
+                            bins = distribution.bins,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .testTag("native_confidence_canvas")
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -502,117 +438,6 @@ private fun MetricPill(
             )
         }
     }
-}
-
-/**
- * Embedded WebView running Recharts React library with instant SVG rendering fallback.
- */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun RechartsWebViewContainer(
-    chartMode: ChartDisplayMode,
-    topKScores: List<TopKConfidenceScore>,
-    bins: List<ScoreBin>,
-    isDarkTheme: Boolean,
-    primaryColor: String,
-    textColor: String,
-    mutedColor: String,
-    gridColor: String,
-    bgCard: String,
-    onResultClick: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val topKJson = remember(topKScores) {
-        val array = JSONArray()
-        topKScores.forEach { item ->
-            val obj = JSONObject()
-            obj.put("rank", "#${item.rank}")
-            obj.put("name", item.fileName)
-            obj.put("score", "%.1f".format(item.scorePercentage).toDoubleOrNull() ?: 0.0)
-            obj.put("tier", item.tier)
-            obj.put("color", item.tierColorHex)
-            obj.put("chunk", "Chunk #${item.chunkIndex + 1}")
-            obj.put("date", item.formattedDate)
-            array.put(obj)
-        }
-        array.toString()
-    }
-
-    val binsJson = remember(bins) {
-        val array = JSONArray()
-        bins.forEach { bin ->
-            val obj = JSONObject()
-            obj.put("bin", bin.label)
-            obj.put("count", bin.count)
-            obj.put("percentage", "%.1f".format(bin.percentage))
-            array.put(obj)
-        }
-        array.toString()
-    }
-
-    val modeStr = chartMode.name
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
-
-    LaunchedEffect(chartMode, topKJson, binsJson, isDarkTheme) {
-        webViewRef?.evaluateJavascript(
-            "if (window.updateRechartsData) { window.updateRechartsData('$modeStr', $topKJson, $binsJson, $isDarkTheme, '$primaryColor', '$textColor', '$mutedColor', '$gridColor'); }",
-            null
-        )
-    }
-
-    val htmlDocument = remember(isDarkTheme) {
-        generateRechartsHtml(
-            initialMode = modeStr,
-            initialTopKJson = topKJson,
-            initialBinsJson = binsJson,
-            isDark = isDarkTheme,
-            primaryColor = primaryColor,
-            textColor = textColor,
-            mutedColor = mutedColor,
-            gridColor = gridColor,
-            bgCard = bgCard
-        )
-    }
-
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            WebView(ctx).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    loadWithOverviewMode = true
-                    useWideViewPort = true
-                    cacheMode = WebSettings.LOAD_DEFAULT
-                }
-                addJavascriptInterface(object {
-                    @JavascriptInterface
-                    fun onBarClicked(index: Int) {
-                        post { onResultClick(index) }
-                    }
-                }, "AndroidBridge")
-
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        view?.evaluateJavascript(
-                            "if (window.updateRechartsData) { window.updateRechartsData('$modeStr', $topKJson, $binsJson, $isDarkTheme, '$primaryColor', '$textColor', '$mutedColor', '$gridColor'); }",
-                            null
-                        )
-                    }
-                }
-                loadDataWithBaseURL("https://docuvector.ai", htmlDocument, "text/html", "UTF-8", null)
-                webViewRef = this
-            }
-        },
-        update = { webView ->
-            webView.evaluateJavascript(
-                "if (window.updateRechartsData) { window.updateRechartsData('$modeStr', $topKJson, $binsJson, $isDarkTheme, '$primaryColor', '$textColor', '$mutedColor', '$gridColor'); }",
-                null
-            )
-        }
-    )
 }
 
 /**
@@ -840,318 +665,4 @@ private fun NativeConfidenceCanvas(
             }
         }
     }
-}
-
-/**
- * Builds responsive Recharts HTML container supporting both Top-K confidence score bar chart
- * and score distribution histogram, with interactive tooltips and SVG offline fallback.
- */
-private fun generateRechartsHtml(
-    initialMode: String,
-    initialTopKJson: String,
-    initialBinsJson: String,
-    isDark: Boolean,
-    primaryColor: String,
-    textColor: String,
-    mutedColor: String,
-    gridColor: String,
-    bgCard: String
-): String {
-    return """
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      width: 100%;
-      height: 100%;
-      background: transparent;
-      overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    #app {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-    }
-    .tooltip {
-      background: ${if (isDark) "#27272A" else "#FFFFFF"};
-      color: $textColor;
-      border: 1px solid ${if (isDark) "#3F3F46" else "#E2E8F0"};
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 11px;
-      box-shadow: 0 6px 12px -2px rgba(0,0,0,0.2);
-      pointer-events: none;
-      max-width: 220px;
-    }
-    .tooltip-title {
-      font-weight: bold;
-      margin-bottom: 3px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .tooltip-score {
-      font-weight: 700;
-      font-size: 12px;
-      margin-bottom: 2px;
-    }
-    .tooltip-meta {
-      color: $mutedColor;
-      font-size: 10px;
-    }
-    .svg-bar {
-      transition: height 0.3s ease, y 0.3s ease;
-      cursor: pointer;
-    }
-    .svg-bar:hover {
-      opacity: 0.85;
-    }
-  </style>
-  <!-- Load Recharts & React from CDN -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
-</head>
-<body>
-  <div id="app"></div>
-
-  <script>
-    let currentMode = '$initialMode'; // "TOP_K" or "DISTRIBUTION"
-    let currentTopK = $initialTopKJson;
-    let currentBins = $initialBinsJson;
-    let isDarkTheme = $isDark;
-    let pColor = '$primaryColor';
-    let tColor = '$textColor';
-    let mColor = '$mutedColor';
-    let gColor = '$gridColor';
-
-    function notifyBarClicked(index) {
-      if (window.AndroidBridge && window.AndroidBridge.onBarClicked) {
-        window.AndroidBridge.onBarClicked(index);
-      }
-    }
-
-    function renderRechartsComponent() {
-      const container = document.getElementById('app');
-      if (!container) return;
-
-      // Full Recharts React render if CDN loaded
-      if (window.Recharts && window.React && window.ReactDOM) {
-        try {
-          const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, ReferenceLine } = window.Recharts;
-          const e = React.createElement;
-
-          if (currentMode === 'TOP_K') {
-            function TopKTooltip({ active, payload }) {
-              if (active && payload && payload.length) {
-                const data = payload[0].payload;
-                return e('div', { className: 'tooltip' },
-                  e('div', { className: 'tooltip-title' }, data.rank + ' ' + data.name),
-                  e('div', { className: 'tooltip-score', style: { color: data.color || pColor } }, data.score + '% Vector Match'),
-                  e('div', { className: 'tooltip-meta' }, data.chunk + ' • ' + data.date)
-                );
-              }
-              return null;
-            }
-
-            function TopKChartApp() {
-              return e(ResponsiveContainer, { width: '100%', height: '100%' },
-                e(BarChart, {
-                  data: currentTopK,
-                  margin: { top: 14, right: 10, left: -22, bottom: 2 }
-                },
-                  e(CartesianGrid, { strokeDasharray: '3 3', vertical: false, stroke: gColor }),
-                  e(XAxis, {
-                    dataKey: 'rank',
-                    tick: { fontSize: 10, fill: mColor },
-                    axisLine: false,
-                    tickLine: false
-                  }),
-                  e(YAxis, {
-                    domain: [0, 100],
-                    unit: '%',
-                    allowDecimals: false,
-                    tick: { fontSize: 9, fill: mColor },
-                    axisLine: false,
-                    tickLine: false
-                  }),
-                  e(ReferenceLine, { y: 70, stroke: '#10B981', strokeDasharray: '2 2', strokeOpacity: 0.6 }),
-                  e(Tooltip, { content: e(TopKTooltip) }),
-                  e(Bar, {
-                    dataKey: 'score',
-                    radius: [5, 5, 0, 0],
-                    onClick: (entry, index) => notifyBarClicked(index)
-                  },
-                    currentTopK.map((entry, index) =>
-                      e(Cell, { key: 'topk-cell-' + index, fill: entry.color || pColor, cursor: 'pointer' })
-                    )
-                  )
-                )
-              );
-            }
-
-            ReactDOM.render(e(TopKChartApp), container);
-            return;
-          } else {
-            // Distribution mode
-            const barColors = ['#EF4444', '#F59E0B', '#6366F1', '#3B82F6', '#10B981'];
-
-            function DistributionTooltip({ active, payload }) {
-              if (active && payload && payload.length) {
-                const data = payload[0].payload;
-                return e('div', { className: 'tooltip' },
-                  e('div', { className: 'tooltip-title' }, 'Confidence: ' + data.bin),
-                  e('div', { className: 'tooltip-score', style: { color: pColor } }, data.count + ' match chunks (' + data.percentage + '%)')
-                );
-              }
-              return null;
-            }
-
-            function DistChartApp() {
-              return e(ResponsiveContainer, { width: '100%', height: '100%' },
-                e(BarChart, {
-                  data: currentBins,
-                  margin: { top: 12, right: 10, left: -22, bottom: 0 }
-                },
-                  e(CartesianGrid, { strokeDasharray: '3 3', vertical: false, stroke: gColor }),
-                  e(XAxis, {
-                    dataKey: 'bin',
-                    tick: { fontSize: 10, fill: mColor },
-                    axisLine: false,
-                    tickLine: false
-                  }),
-                  e(YAxis, {
-                    allowDecimals: false,
-                    tick: { fontSize: 10, fill: mColor },
-                    axisLine: false,
-                    tickLine: false
-                  }),
-                  e(Tooltip, { content: e(DistributionTooltip) }),
-                  e(Bar, {
-                    dataKey: 'count',
-                    radius: [5, 5, 0, 0]
-                  },
-                    currentBins.map((entry, index) =>
-                      e(Cell, { key: 'cell-' + index, fill: barColors[index % barColors.length] })
-                    )
-                  )
-                )
-              );
-            }
-
-            ReactDOM.render(e(DistChartApp), container);
-            return;
-          }
-        } catch (err) {
-          console.warn('Recharts React render error, falling back to SVG renderer:', err);
-        }
-      }
-
-      // Offline / Fast SVG fallback
-      renderSvgFallback(container);
-    }
-
-    function renderSvgFallback(container) {
-      const width = container.clientWidth || 340;
-      const height = container.clientHeight || 170;
-      const paddingBottom = 26;
-      const paddingTop = 14;
-      const chartHeight = height - paddingBottom - paddingTop;
-
-      let barsSvg = '';
-      let labelsSvg = '';
-
-      if (currentMode === 'TOP_K') {
-        const data = currentTopK;
-        if (!data || data.length === 0) return;
-        const slotWidth = width / data.length;
-        const barWidth = Math.min(slotWidth * 0.65, 36);
-
-        data.forEach((d, i) => {
-          const h = (d.score / 100) * (chartHeight - 14);
-          const x = i * slotWidth + (slotWidth - barWidth) / 2;
-          const y = height - paddingBottom - h;
-          const color = d.color || '#10B981';
-
-          barsSvg += `
-            <g class="svg-bar" onclick="notifyBarClicked(${'$'}{i})">
-              <rect x="${'$'}{x}" y="${'$'}{y}" width="${'$'}{barWidth}" height="${'$'}{Math.max(h, 4)}" rx="4" fill="${'$'}{color}" />
-              <text x="${'$'}{x + barWidth / 2}" y="${'$'}{y - 4}" font-size="10" font-weight="bold" fill="${'$'}{tColor}" text-anchor="middle" font-family="monospace">${'$'}{Math.round(d.score)}%</text>
-            </g>
-          `;
-
-          labelsSvg += `
-            <text x="${'$'}{i * slotWidth + slotWidth / 2}" y="${'$'}{height - 8}" font-size="10" font-weight="600" fill="${'$'}{pColor}" text-anchor="middle" onclick="notifyBarClicked(${'$'}{i})">${'$'}{d.rank}</text>
-          `;
-        });
-      } else {
-        const data = currentBins;
-        const barColors = ['#EF4444', '#F59E0B', '#6366F1', '#3B82F6', '#10B981'];
-        const maxCount = Math.max(...data.map(d => d.count), 1);
-        const slotWidth = width / data.length;
-        const barWidth = slotWidth * 0.55;
-
-        data.forEach((d, i) => {
-          const h = (d.count / maxCount) * (chartHeight - 16);
-          const x = i * slotWidth + (slotWidth - barWidth) / 2;
-          const y = height - paddingBottom - h;
-          const color = barColors[i % barColors.length];
-
-          barsSvg += `
-            <g class="svg-bar">
-              <rect x="${'$'}{x}" y="${'$'}{y}" width="${'$'}{barWidth}" height="${'$'}{Math.max(h, 4)}" rx="5" fill="${'$'}{color}" />
-              <text x="${'$'}{x + barWidth / 2}" y="${'$'}{y - 4}" font-size="11" font-weight="bold" fill="${'$'}{tColor}" text-anchor="middle" font-family="monospace">${'$'}{d.count}</text>
-            </g>
-          `;
-
-          labelsSvg += `
-            <text x="${'$'}{i * slotWidth + slotWidth / 2}" y="${'$'}{height - 8}" font-size="10" fill="${'$'}{mColor}" text-anchor="middle">${'$'}{d.bin}</text>
-          `;
-        });
-      }
-
-      container.innerHTML = `
-        <svg width="100%" height="100%" viewBox="0 0 ${'$'}{width} ${'$'}{height}">
-          <!-- Grid lines -->
-          <line x1="10" y1="${'$'}{height - paddingBottom}" x2="${'$'}{width - 10}" y2="${'$'}{height - paddingBottom}" stroke="${'$'}{gColor}" stroke-width="1" />
-          <line x1="10" y1="${'$'}{height - paddingBottom - chartHeight / 2}" x2="${'$'}{width - 10}" y2="${'$'}{height - paddingBottom - chartHeight / 2}" stroke="${'$'}{gColor}" stroke-width="1" stroke-dasharray="3,3" />
-          <line x1="10" y1="${'$'}{paddingTop}" x2="${'$'}{width - 10}" y2="${'$'}{paddingTop}" stroke="${'$'}{gColor}" stroke-width="1" stroke-dasharray="3,3" />
-
-          <!-- Bars -->
-          ${'$'}{barsSvg}
-
-          <!-- Labels -->
-          ${'$'}{labelsSvg}
-        </svg>
-      `;
-    }
-
-    window.updateRechartsData = function(mode, topK, bins, isDark, primary, text, muted, grid) {
-      currentMode = mode || currentMode;
-      currentTopK = topK || currentTopK;
-      currentBins = bins || currentBins;
-      isDarkTheme = isDark;
-      pColor = primary || pColor;
-      tColor = text || tColor;
-      mColor = muted || mColor;
-      gColor = grid || gColor;
-      renderRechartsComponent();
-    };
-
-    // Initial render
-    window.addEventListener('load', renderRechartsComponent);
-    setTimeout(renderRechartsComponent, 50);
-  </script>
-</body>
-</html>
-""".trimIndent()
 }
