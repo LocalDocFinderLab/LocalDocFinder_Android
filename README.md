@@ -172,7 +172,8 @@ Each release has two kinds of APK built from the same code (Gradle product flavo
 
 | | prod | dev |
 |---|---|---|
-| File | `LocalDocFinder-<tag>-<abi>.apk` | `LocalDocFinder-<tag>-dev-<abi>.apk` |
+| File | `LocalDocFinder-<tag>-<abi>.apk` (or `-universal`) | `LocalDocFinder-<tag>-dev-universal.apk` (one APK for every phone) |
+| Hardware info (processor, GPU, NPU/TPU versions) | yes | yes (Menu → Hardware & Thermal HUD → This device) |
 | App name / id | LocalDoc Finder / `com.aistudio.vectorsearch.dvmxqe` | LocalDoc Dev / `...dvmxqe.dev` (installs next to prod) |
 | Sample documents, test tools | no | yes (Developer console → Tools) |
 | Developer console | no | yes: network ledger, logs, state |
