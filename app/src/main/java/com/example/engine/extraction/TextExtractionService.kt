@@ -45,7 +45,13 @@ class TextExtractionService(private val context: Context) {
                 Log.i(TAG, "PDFBox extracted ${cleaned.pages.size}/${result.metadata.pageCount} page(s) from $uri")
                 return cleaned
             }
-            Log.i(TAG, "PDFBox found no text in $uri (likely a scanned PDF); trying built-in extractor")
+            if (result.error == null && result.metadata.pageCount > 0) {
+                // PDFBox read the file fine and it has pages but no text layer: a scan. Return no text so the
+                // pages are read with OCR; the byte scanner below would only pull junk out of the image data.
+                Log.i(TAG, "PDFBox found no text in $uri (${result.metadata.pageCount} page(s), likely scanned)")
+                return cleaned
+            }
+            Log.i(TAG, "PDFBox found no text in $uri (${result.error ?: "no pages"}); trying built-in extractor")
         } catch (t: Throwable) {
             // PDFBox can throw IOException (corrupt / password protected) but also Error subclasses on
             // pathological files (StackOverflowError, OutOfMemoryError, LinkageError). None should kill indexing.
