@@ -26,6 +26,19 @@ data class ChunkContentRow(
     val tags: String
 )
 
+/** A chunk's id, owning file and embedding BLOB; identical text embeds to identical bytes, so this finds copies. */
+data class ChunkFingerprintRow(
+    val id: Long,
+    val fileUri: String,
+    val embeddingBlob: ByteArray
+)
+
+/** One (file, tag) pair, so the tags of many files can be loaded with a single query. */
+data class FileTagRow(
+    val fileUri: String,
+    val tag: String
+)
+
 /** When a file was last indexed (its stored source timestamp) and how many chunks it currently has. */
 data class FileIndexStamp(
     val lastIndexed: Long?,
@@ -177,6 +190,29 @@ interface DocumentChunkDao {
             "FROM documents WHERE fileUri = :fileUri"
     )
     suspend fun getFileExtractionStamp(fileUri: String): FileExtractionStamp
+
+    /**
+     * Keyset-paginated embedding scan (ascending id). Lets vector search stream the corpus in small pages
+     * without ever materialising chunk text or the whole table in memory.
+     */
+    @Query("SELECT id, embeddingBlob, metadata FROM documents WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getEmbeddingPage(afterId: Long, limit: Int): List<ChunkEmbeddingRow>
+
+    @Query("SELECT id, fileUri, embeddingBlob FROM documents WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getFingerprintPage(afterId: Long, limit: Int): List<ChunkFingerprintRow>
+
+    /** File names containing [pattern] (a LIKE pattern body, `_` matches one character), for search suggestions. */
+    @Query("SELECT DISTINCT fileName FROM documents WHERE fileName LIKE '%' || :pattern || '%' LIMIT :limit")
+    suspend fun searchFileNames(pattern: String, limit: Int): List<String>
+
+    @Query("SELECT * FROM documents WHERE fileUri IN (:fileUris)")
+    suspend fun getChunksForFiles(fileUris: List<String>): List<DocumentChunkEntity>
+
+    @Query("SELECT * FROM documents WHERE tags LIKE '%' || :tag || '%'")
+    suspend fun getChunksWithTagText(tag: String): List<DocumentChunkEntity>
+
+    @Query("SELECT fileUri, tag FROM document_tags WHERE fileUri IN (:fileUris) ORDER BY tag ASC")
+    suspend fun getTagsForFiles(fileUris: List<String>): List<FileTagRow>
 
     /**
      * Number of chunks whose vector was NOT produced by [modelId] (including chunks indexed before models

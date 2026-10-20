@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -108,6 +109,7 @@ fun AppNavigationDrawerContent(
     onIndexByFileTypesClick: () -> Unit = {},
     importedDocumentCount: Int = 0,
     onOpenImportedDocuments: () -> Unit = {},
+    onOpenDuplicates: () -> Unit = {},
     onOpenWhatsNew: () -> Unit = {},
     onOpenPrivacyReport: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
@@ -592,6 +594,17 @@ fun AppNavigationDrawerContent(
                     onOpenImportedDocuments()
                 },
                 testTag = "drawer_imported_documents"
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Default.ContentCopy,
+                title = "Find Duplicates",
+                subtitle = "Spot identical or near-identical files in your index",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenDuplicates()
+                },
+                testTag = "drawer_find_duplicates"
             )
 
             DrawerMenuItem(

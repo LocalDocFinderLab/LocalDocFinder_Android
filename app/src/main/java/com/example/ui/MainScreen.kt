@@ -129,6 +129,8 @@ import com.example.ui.components.AppUpdateBanner
 import com.example.ui.components.AppUpdateSheet
 import com.example.ui.components.ChatBackupSheet
 import com.example.ui.components.DocumentDetailSheet
+import com.example.ui.components.DuplicatesSheet
+import com.example.ui.components.openDocumentExternally
 import com.example.ui.components.BackgroundScanBanner
 import com.example.ui.components.FtsDocumentSearchComponent
 import com.example.ui.components.ImportedDocumentsSheet
@@ -181,6 +183,9 @@ fun MainScreen(
     val allTags by viewModel.allTags.collectAsStateWithLifecycle()
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
+    val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val duplicateGroups by viewModel.duplicateGroups.collectAsStateWithLifecycle()
+    val isScanningDuplicates by viewModel.isScanningDuplicates.collectAsStateWithLifecycle()
     val hardwareMetrics by viewModel.hardwareMetrics.collectAsStateWithLifecycle()
     val indexingSpeed by viewModel.indexingSpeed.collectAsStateWithLifecycle()
     val fullSpeedEnabled by viewModel.fullSpeedEnabled.collectAsStateWithLifecycle()
@@ -233,6 +238,7 @@ fun MainScreen(
     var showQuarantineDialog by remember { mutableStateOf(false) }
     var showFileTypeDialog by remember { mutableStateOf(false) }
     var showImportedDocumentsSheet by remember { mutableStateOf(false) }
+    var showDuplicatesSheet by remember { mutableStateOf(false) }
     // "What's new" appears once per installed version code; the last one shown is kept in SharedPreferences.
     var showWhatsNew by remember {
         mutableStateOf(
@@ -454,6 +460,10 @@ fun MainScreen(
                 onIndexByFileTypesClick = { showFileTypeDialog = true },
                 importedDocumentCount = storedDocumentPaths.size,
                 onOpenImportedDocuments = { showImportedDocumentsSheet = true },
+                onOpenDuplicates = {
+                    showDuplicatesSheet = true
+                    viewModel.scanForDuplicates()
+                },
                 onOpenWhatsNew = { showWhatsNew = true },
                 onOpenPrivacyReport = { showPrivacyReport = true },
                 onOpenDevConsole = { showDevConsole = true },
@@ -897,6 +907,8 @@ fun MainScreen(
                             allTags = allTags,
                             onSelectTag = { viewModel.selectTag(it) },
                             recentSearches = recentSearches,
+                            suggestions = suggestions,
+                            onSelectSuggestion = { viewModel.onQueryChanged(it) },
                             onReRunSearch = { viewModel.reRunSearchQuery(it) },
                             onDeleteHistoryItem = { viewModel.deleteSearchHistoryItem(it) },
                             onClearHistory = { viewModel.clearSearchHistory() },
@@ -974,7 +986,8 @@ fun MainScreen(
             result = preview,
             repository = viewModel.repository,
             searchQuery = query,
-            onDismiss = { viewModel.onSelectResultForPreview(null) }
+            onDismiss = { viewModel.onSelectResultForPreview(null) },
+            onOpenSimilar = { viewModel.onSelectResultForPreview(it) }
         )
     }
 
@@ -1401,6 +1414,20 @@ fun MainScreen(
             onPickFolder = { directoryPickerLauncher.launch(null) },
             onRetryUnfinished = { viewModel.reindexStoredDocumentPaths() },
             onRemove = { viewModel.removeStoredDocumentPath(it.uri) }
+        )
+    }
+
+    // Duplicate and near-duplicate documents (read-only report)
+    if (showDuplicatesSheet) {
+        DuplicatesSheet(
+            groups = duplicateGroups,
+            isScanning = isScanningDuplicates,
+            onRescan = { viewModel.scanForDuplicates() },
+            onOpenFile = { openDocumentExternally(context, it) },
+            onDismiss = {
+                showDuplicatesSheet = false
+                viewModel.dismissDuplicates()
+            }
         )
     }
 

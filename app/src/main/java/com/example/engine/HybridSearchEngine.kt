@@ -58,6 +58,11 @@ class HybridSearchEngine(
         private const val MAX_FTS_CANDIDATES = 400
         private const val MAX_NAME_CANDIDATES = 150
         private const val MAX_SEMANTIC_CANDIDATES = 60
+        /** Stays below SQLite's 999 bound-variable limit on older Android versions. */
+        private const val SQL_BATCH = 500
+        private const val SIMILAR_OVERSAMPLE = 6
+        /** Below this cosine similarity a chunk is not offered as "similar". */
+        private const val MIN_SIMILAR_SCORE = 0.3f
     }
 
     suspend fun search(
@@ -292,6 +297,71 @@ class HybridSearchEngine(
                 pageLabel = ChunkMetadata.pageLabel(chunk.metadata)
             )
         }
+    }
+
+    /**
+     * Documents most similar to the chunk [chunkId]: its stored vector is compared with every other chunk embedded by
+     * the same model, and the best chunk of each other file is returned, best first. Nothing is embedded, so this
+     * is as cheap as a normal vector scan. Returns nothing for chunks without a model-tagged vector.
+     */
+    suspend fun findSimilar(chunkId: Long, limit: Int = 8): List<SearchResult> = withContext(Dispatchers.Default) {
+        val start = System.currentTimeMillis()
+        val source = dao.getChunksByIds(listOf(chunkId)).firstOrNull() ?: return@withContext emptyList()
+        val sourceModel = ChunkMetadata.model(source.metadata) ?: return@withContext emptyList()
+        val query = VectorSimilarityUtils.byteArrayToFloatArray(source.embeddingBlob)
+        if (query.isEmpty() || limit <= 0) return@withContext emptyList()
+
+        // Several chunks of the same file will rank high, so look well past `limit` before grouping by file.
+        val scan = VectorScanner.scan(
+            query = query,
+            modelId = sourceModel,
+            topK = limit * SIMILAR_OVERSAMPLE + SIMILAR_OVERSAMPLE,
+            expectedCount = dao.getTotalChunksCountDirect()
+        ) { afterId, pageLimit -> dao.getEmbeddingPage(afterId, pageLimit) }
+
+        val simById = HashMap<Long, Float>()
+        for (i in scan.topIds.indices) simById[scan.topIds[i]] = scan.topSims[i]
+
+        val bestPerFile = LinkedHashMap<String, DocumentChunkEntity>()
+        for (chunk in loadChunksByIds(scan.topIds.toList())) {
+            if (chunk.fileUri == source.fileUri) continue
+            if ((simById[chunk.id] ?: 0f) < MIN_SIMILAR_SCORE) continue
+            if (bestPerFile.size >= limit && !bestPerFile.containsKey(chunk.fileUri)) break
+            bestPerFile.putIfAbsent(chunk.fileUri, chunk) // chunks arrive best first, so the first one per file wins
+        }
+
+        val latency = System.currentTimeMillis() - start
+        bestPerFile.values.take(limit).map { chunk ->
+            val sim = simById[chunk.id] ?: 0f
+            SearchResult(
+                chunkId = chunk.id,
+                fileUri = chunk.fileUri,
+                fileName = chunk.fileName,
+                chunkIndex = chunk.chunkIndex,
+                chunkText = chunk.chunkText,
+                snippet = chunk.chunkText.take(SNIPPET_WINDOW) + if (chunk.chunkText.length > SNIPPET_WINDOW) "…" else "",
+                highlightedTerms = emptyList(),
+                cosineSimilarity = sim,
+                vectorRank = scan.rankOf(chunk.id, sim),
+                ftsRank = null,
+                rrfScore = sim,
+                combinedScore = sim,
+                latencyMs = latency,
+                tags = resolveTags(chunk),
+                timestamp = chunk.timestamp,
+                fileSize = chunk.chunkText.length.toLong(),
+                pageLabel = ChunkMetadata.pageLabel(chunk.metadata)
+            )
+        }
+    }
+
+    private suspend fun loadChunksByIds(ids: List<Long>): List<DocumentChunkEntity> {
+        val byId = HashMap<Long, DocumentChunkEntity>(ids.size)
+        for (batch in ids.chunked(SQL_BATCH)) {
+            for (chunk in dao.getChunksByIds(batch)) byId[chunk.id] = chunk
+        }
+        // Keep the vector ranking order.
+        return ids.mapNotNull { byId[it] }
     }
 
     private suspend fun resolveTags(chunk: DocumentChunkEntity): List<String> =

@@ -18,6 +18,9 @@ interface SearchHistoryDao {
     @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentSearchesDirect(limit: Int = 30): List<SearchHistoryEntity>
 
+    @Query("SELECT query FROM search_history WHERE query LIKE '%' || :text || '%' ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun searchQueries(text: String, limit: Int): List<String>
+
     @Query("DELETE FROM search_history WHERE id = :id")
     suspend fun deleteById(id: Long)
 
