@@ -44,7 +44,9 @@ data class FileNameEntry(
 data class FileExtractionStamp(
     val pageChunks: Int,
     val ocrChunks: Int,
-    val officeChunks: Int
+    val officeChunks: Int,
+    /** Chunks holding the placeholder text older versions indexed for scanned PDFs instead of their content. */
+    val placeholderChunks: Int
 )
 
 /**
@@ -157,7 +159,8 @@ interface DocumentChunkDao {
     @Query(
         "SELECT COALESCE(SUM(CASE WHEN metadata LIKE '%page=%' THEN 1 ELSE 0 END), 0) AS pageChunks, " +
             "COALESCE(SUM(CASE WHEN metadata LIKE '%ocr=1%' THEN 1 ELSE 0 END), 0) AS ocrChunks, " +
-            "COALESCE(SUM(CASE WHEN metadata LIKE '%office=1%' THEN 1 ELSE 0 END), 0) AS officeChunks " +
+            "COALESCE(SUM(CASE WHEN metadata LIKE '%office=1%' THEN 1 ELSE 0 END), 0) AS officeChunks, " +
+            "COALESCE(SUM(CASE WHEN chunkText LIKE '%Rendered page content for %' THEN 1 ELSE 0 END), 0) AS placeholderChunks " +
             "FROM documents WHERE fileUri = :fileUri"
     )
     suspend fun getFileExtractionStamp(fileUri: String): FileExtractionStamp

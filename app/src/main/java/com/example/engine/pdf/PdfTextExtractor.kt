@@ -2,9 +2,7 @@ package com.example.engine.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -26,7 +24,7 @@ import java.util.zip.Inflater
  * - ToUnicode CMap parsing (bfchar & bfrange for Unicode glyph mapping)
  * - Text operators: Tj, TJ, ', ", BT, ET, Td, TD, Tm, T*
  * - Literal strings with escape sequences & Hexadecimal string decoding
- * - PdfRenderer fallback for scanned/image-based PDF documents
+ * - Scanned/image-only PDFs yield no text here; DocumentParser reads them with OCR
  */
 object PdfTextExtractor {
 
@@ -51,7 +49,7 @@ object PdfTextExtractor {
     )
 
     /**
-     * Extracts all text from a given local URI using Context for stream and PdfRenderer fallback.
+     * Extracts all text from a given local URI (file:// or content://).
      */
     fun extractText(context: Context, uri: Uri): String {
         val result = extractDocument(context, uri)
@@ -81,19 +79,8 @@ object PdfTextExtractor {
 
             // Guard against massive files blowing up memory in byte buffer (strict 8MB limit)
             if (fileSize > 8L * 1024 * 1024) {
-                Log.w(TAG, "PDF is very large (${fileSize / (1024 * 1024)} MB). Using PdfRenderer fallback to prevent OOM.")
-                val rendererText = extractTextUsingPdfRenderer(context, uri)
-                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "Large PDF"
-                return if (rendererText.isNotBlank()) {
-                    ExtractionResult(
-                        fullText = rendererText,
-                        pageTexts = listOf(rendererText),
-                        metadata = PdfMetadata(title = filename, pageCount = 1),
-                        isSuccess = true
-                    )
-                } else {
-                    ExtractionResult("", emptyList(), PdfMetadata(), false, "File exceeds 8MB in-memory scan limit")
-                }
+                Log.w(TAG, "PDF is very large (${fileSize / (1024 * 1024)} MB); skipping the in-memory scanner.")
+                return ExtractionResult("", emptyList(), PdfMetadata(), false, "File exceeds 8MB in-memory scan limit")
             }
 
             val bytes = try {
@@ -118,18 +105,8 @@ object PdfTextExtractor {
                 return res
             }
 
-            // Fallback: try PdfRenderer page extraction for scanned/image PDFs
-            val rendererText = extractTextUsingPdfRenderer(context, uri)
-            if (rendererText.isNotBlank()) {
-                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "PDF Document"
-                return ExtractionResult(
-                    fullText = rendererText,
-                    pageTexts = listOf(rendererText),
-                    metadata = PdfMetadata(title = filename, pageCount = 1),
-                    isSuccess = true
-                )
-            }
-
+            // No text layer (a scanned PDF): return nothing, so DocumentParser reads the pages with OCR
+            // instead of indexing placeholder text.
             res
         } catch (t: Throwable) {
             if (t is OutOfMemoryError) {
@@ -812,49 +789,5 @@ object PdfTextExtractor {
             .filter { it.lowercase() !in setOf("stream", "endstream", "endobj", "xref", "trailer", "startxref", "flatedecode", "obj", "font") }
             .take(150)
             .joinToString(" ")
-    }
-
-    /**
-     * PdfRenderer Fallback: Uses Android's built-in PdfRenderer to inspect PDF pages
-     * when stream decompression returns empty text (e.g. scanned image PDFs).
-     */
-    private fun extractTextUsingPdfRenderer(context: Context, uri: Uri): String {
-        return try {
-            val pfd = if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
-                val path = uri.path ?: uri.toString().removePrefix("file://")
-                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-            } else {
-                context.contentResolver.openFileDescriptor(uri, "r")
-            } ?: return ""
-
-            pfd.use { descriptor ->
-                val renderer = PdfRenderer(descriptor)
-                try {
-                    if (renderer.pageCount <= 0) {
-                        return ""
-                    }
-                    val pageCount = minOf(renderer.pageCount, 10)
-                    val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "PDF Document"
-                    val sb = StringBuilder()
-                    sb.append("Document: $filename\n")
-                    sb.append("Total Pages: ${renderer.pageCount}\n\n")
-
-                    for (i in 0 until pageCount) {
-                        val page = renderer.openPage(i)
-                        val width = page.width
-                        val height = page.height
-                        sb.append("--- Page ${i + 1} ($width x $height px) ---\n")
-                        sb.append("Rendered page content for $filename.\n\n")
-                        page.close()
-                    }
-                    sb.toString()
-                } finally {
-                    try { renderer.close() } catch (_: Throwable) {}
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "PdfRenderer fallback notice: ${e.message}")
-            ""
-        }
     }
 }

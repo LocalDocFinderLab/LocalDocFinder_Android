@@ -291,8 +291,9 @@ class DocumentRepository(
 
     /**
      * True for an up-to-date file whose stored text came from an older, weaker reader and should be read
-     * again once: a picture or text-less PDF indexed before text recognition existed, or a .doc/.xls/.ppt/.xlsx
-     * file indexed before the Office readers existed (it was read as plain text).
+     * again once: a picture or text-less PDF indexed before text recognition existed (older versions stored
+     * placeholder text for scanned PDFs), or a .doc/.xls/.ppt/.xlsx file indexed before the Office readers
+     * existed (it was read as plain text).
      */
     private suspend fun needsReextraction(fileName: String, fileUri: String): Boolean {
         val ext = fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
@@ -303,7 +304,7 @@ class DocumentRepository(
         return when {
             isOffice -> stamp.officeChunks == 0
             stamp.ocrChunks > 0 -> false
-            else -> isImage || stamp.pageChunks == 0
+            else -> isImage || stamp.pageChunks == 0 || stamp.placeholderChunks > 0
         }
     }
 
