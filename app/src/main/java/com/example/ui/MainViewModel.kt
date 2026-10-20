@@ -20,6 +20,7 @@ import com.example.engine.SearchMode
 import com.example.engine.SearchResult
 import com.example.engine.SearchSortOrder
 import com.example.engine.calculateDateRangeBounds
+import com.example.engine.search.SmartSearch
 import com.example.updater.engine.AppUpdateChecker
 import com.example.updater.engine.AppUpdateDownloader
 import com.example.updater.engine.AppUpdateInstaller
@@ -125,6 +126,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _bm25Weight.value = bm25W.coerceIn(0.0f, 1.0f)
     }
 
+    /** See [DeveloperMode]: off means one smart search and a short menu, on shows every engine option. */
+    private val _developerMode = MutableStateFlow(DeveloperMode.isEnabled(application))
+    val developerMode: StateFlow<Boolean> = _developerMode.asStateFlow()
+
+    fun setDeveloperMode(enabled: Boolean) {
+        DeveloperMode.setEnabled(getApplication(), enabled)
+        _developerMode.value = enabled
+        if (!enabled) {
+            // Leaving developer mode drops any hand-picked engine settings, so search is smart again.
+            _vectorWeight.value = 0.5f
+            _bm25Weight.value = 0.5f
+            if (_searchMode.value != SearchMode.HYBRID) {
+                _searchMode.value = SearchMode.HYBRID
+                performSearch(_query.value, SearchMode.HYBRID, _selectedTag.value)
+            }
+        }
+    }
+
+    /**
+     * How much meaning counts against words for [query]: picked per query by [SmartSearch] unless developer
+     * mode is on, where the hand-set hybrid weights decide.
+     */
+    private fun semanticWeightFor(
+        query: String,
+        vectorW: Float = _vectorWeight.value,
+        bm25W: Float = _bm25Weight.value,
+        developer: Boolean = _developerMode.value
+    ): Float {
+        if (!developer) return SmartSearch.semanticWeight(query.trimStart())
+        val total = vectorW + bm25W
+        return if (total > 0f) vectorW / total else 0.5f
+    }
+
     /**
      * Re-blends word and meaning scores when the user moves the "meaning vs words" weights, without searching
      * again. Results from the ranker (see [com.example.engine.search.SearchRanker]) keep their ranking rules:
@@ -134,17 +168,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         rawResults: List<SearchResult>,
         vectorW: Float = _vectorWeight.value,
         bm25W: Float = _bm25Weight.value,
-        mode: SearchMode = _searchMode.value
+        mode: SearchMode = _searchMode.value,
+        semanticWeight: Float? = null
     ): List<SearchResult> {
         if (rawResults.isEmpty()) return emptyList()
 
         val totalW = vectorW + bm25W
         val normVecW = if (totalW > 0f) vectorW / totalW else 0.5f
         val normBm25W = if (totalW > 0f) bm25W / totalW else 0.5f
+        val meaningWeight = semanticWeight ?: normVecW
 
         return rawResults.map { res ->
             if (res.matchType != com.example.engine.search.MatchType.NONE) {
-                val blended = com.example.engine.search.SearchRanker.finalScore(res.lexicalScore, res.semanticScore, mode, normVecW)
+                val blended = com.example.engine.search.SearchRanker.finalScore(res.lexicalScore, res.semanticScore, mode, meaningWeight)
                 val multiChunkBonus = 0.015f * (res.matchCount - 1).coerceIn(0, 4)
                 return@map res.copy(combinedScore = (blended + multiChunkBonus).coerceIn(0f, 1f))
             }
@@ -200,15 +236,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private data class RankingConfigState(
         val vectorWeight: Float = 0.5f,
         val bm25Weight: Float = 0.5f,
-        val mode: SearchMode = SearchMode.HYBRID
+        val mode: SearchMode = SearchMode.HYBRID,
+        val developer: Boolean = false
     )
 
     private val rankingConfigState: StateFlow<RankingConfigState> = combine(
         _vectorWeight,
         _bm25Weight,
-        _searchMode
-    ) { vW, bW, mode ->
-        RankingConfigState(vW, bW, mode)
+        _searchMode,
+        _developerMode
+    ) { vW, bW, mode, developer ->
+        RankingConfigState(vW, bW, mode, developer)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RankingConfigState())
 
     val searchResults: StateFlow<List<SearchResult>> = combine(
@@ -218,7 +256,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (q.isBlank() && tag == null) {
             return@combine emptyList()
         }
-        val ranked = calculateHybridRanking(rawList, config.vectorWeight, config.bm25Weight, config.mode)
+        val ranked = calculateHybridRanking(
+            rawList,
+            config.vectorWeight,
+            config.bm25Weight,
+            config.mode,
+            semanticWeightFor(q, config.vectorWeight, config.bm25Weight, config.developer)
+        )
         var filtered = filter.apply(ranked)
         if (tier != null) {
             filtered = when (tier) {
@@ -837,9 +881,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {
             SearchMode.HYBRID
         }
-        _searchMode.value = mode
+        // Outside developer mode there is only the smart search, whatever mode the history entry used.
+        val effectiveMode = if (_developerMode.value) mode else SearchMode.HYBRID
+        _searchMode.value = effectiveMode
         _selectedTag.value = historyItem.filterTag
-        performSearch(historyItem.query, mode, historyItem.filterTag)
+        performSearch(historyItem.query, effectiveMode, historyItem.filterTag)
     }
 
     fun onQueryChanged(newQuery: String) {
@@ -940,7 +986,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Fetch topK = 60 to have ample candidates for interactive filtering and sorting.
                 // KEYWORD mode ranks by words only, so it skips the full vector scan.
                 val isKeyword = mode == SearchMode.KEYWORD && q.isNotBlank()
-                val results = repository.search(q, mode, topK = 60, filterTag = tag, semanticScoring = !isKeyword)
+                val results = repository.search(
+                    q, mode, topK = 60, filterTag = tag, semanticScoring = !isKeyword,
+                    semanticWeight = semanticWeightFor(q)
+                )
                 _rawSearchResults.value = results
                 _searchLatencyMs.value = System.currentTimeMillis() - start
                 if (q.isNotBlank()) {

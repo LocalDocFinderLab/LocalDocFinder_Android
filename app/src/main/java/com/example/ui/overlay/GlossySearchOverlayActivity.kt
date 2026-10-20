@@ -183,6 +183,7 @@ fun GlossySearchOverlayScreen(
 
     var query by remember { mutableStateOf(initialQuery) }
     var searchMode by remember { mutableStateOf(SearchMode.HYBRID) }
+    val developerMode = remember { com.example.ui.DeveloperMode.isEnabled(context) }
     var selectedFilterType by remember { mutableStateOf("All") }
 
     var isSearching by remember { mutableStateOf(false) }
@@ -275,7 +276,10 @@ fun GlossySearchOverlayScreen(
             val startTime = System.currentTimeMillis()
             searchJob = scope.launch(Dispatchers.IO) {
                 val results = try {
-                    repository.search(query, searchMode, topK = 50)
+                    repository.search(
+                        query, searchMode, topK = 50,
+                        semanticWeight = if (developerMode) 0.5f else com.example.engine.search.SmartSearch.semanticWeight(query)
+                    )
                 } catch (_: Exception) {
                     emptyList()
                 }
@@ -382,6 +386,7 @@ fun GlossySearchOverlayScreen(
             GlossyControlsBar(
                 searchMode = searchMode,
                 onModeSelected = { searchMode = it },
+                showModes = developerMode,
                 selectedFilter = selectedFilterType,
                 availableExtensions = availableExtensions,
                 onFilterSelected = { selectedFilterType = it },
@@ -1069,6 +1074,7 @@ fun GlassPresetChip(
 fun GlossyControlsBar(
     searchMode: SearchMode,
     onModeSelected: (SearchMode) -> Unit,
+    showModes: Boolean = true,
     selectedFilter: String,
     availableExtensions: List<String>,
     onFilterSelected: (String) -> Unit,
@@ -1086,7 +1092,7 @@ fun GlossyControlsBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Modes
-            items(SearchMode.values()) { mode ->
+            if (showModes) items(SearchMode.values()) { mode ->
                 val isSelected = mode == searchMode
                 Box(
                     modifier = Modifier

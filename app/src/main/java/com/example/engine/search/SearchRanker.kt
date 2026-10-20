@@ -119,6 +119,7 @@ object SearchRanker {
 
     private const val K1 = 1.2f
     private const val B = 0.75f
+    private const val NEAR_WINDOW = 8
 
     /** Results for a query that may hit both name and text; [semanticWeight] is the "meaning vs words" slider (0..1). */
     fun rank(
@@ -246,11 +247,16 @@ object SearchRanker {
      * ~0.88 when every word is in the name, less for partial, glued ("taxreport") or misspelled matches.
      */
     fun nameScore(fileName: String, query: ParsedQuery): Float {
-        val required = query.requiredTerms
+        // "tax_return.pdf" typed in full: the trailing "pdf" is this file's extension, not a word of its name.
+        val ext = TextMatch.extension(fileName)
+        val all = query.allTerms
+        val typedExt = all.size > 1 && ext.isNotEmpty() && all.last() == ext
+        val nameTerms = if (typedExt) all.dropLast(1) else all
+        val required = if (typedExt) query.requiredTerms.filter { it != ext }.ifEmpty { nameTerms } else query.requiredTerms
         if (required.isEmpty()) return 0f
         val phrase = TextMatch.fileNamePhrase(fileName)
         val compact = phrase.replace(" ", "")
-        val qPhrase = query.allTerms.joinToString(" ")
+        val qPhrase = nameTerms.joinToString(" ")
         val qCompact = qPhrase.replace(" ", "")
         if (phrase == qPhrase || compact == qCompact) return 1f
         if (qCompact.length >= 3 && (phrase.startsWith("$qPhrase ") || compact.startsWith(qCompact))) return 0.93f
@@ -340,7 +346,12 @@ object SearchRanker {
         } else {
             allExact
         }
-        val score = coverage * fraction * (0.62f + 0.23f * saturation + 0.15f * (if (phrase) 1f else 0f))
+        // All the words close together ("agreement for the rental") is nearly as good as the exact phrase,
+        // and much better than the same words scattered over a page.
+        val near = !phrase && matched == required.size && required.size > 1 &&
+            withinWindow(p.sequence, required, query, NEAR_WINDOW)
+        val order = if (phrase) 1f else if (near) 0.5f else 0f
+        val score = coverage * fraction * (0.62f + 0.23f * saturation + 0.15f * order)
 
         val inRecognized = p.isImage && p.recognizedWords.isNotEmpty() &&
             required.any { matchTerm(it, query.isPrefixTerm(it), p.recognizedWords).weight >= 0.75f }
@@ -383,6 +394,24 @@ object SearchRanker {
                 if (!ok) continue@outer
             }
             return true
+        }
+        return false
+    }
+
+    /** True when every one of [terms] occurs within some run of [window] consecutive words. */
+    private fun withinWindow(sequence: List<String>, terms: List<String>, query: ParsedQuery, window: Int): Boolean {
+        val stems = terms.map { TextMatch.lightStem(it) }
+        val seen = IntArray(terms.size) { -1 }
+        for ((i, word) in sequence.withIndex()) {
+            var hit = false
+            for (k in terms.indices) {
+                val term = terms[k]
+                if (word == term || (query.isPrefixTerm(term) && word.startsWith(term)) || TextMatch.lightStem(word) == stems[k]) {
+                    seen[k] = i
+                    hit = true
+                }
+            }
+            if (hit && seen.all { it >= 0 } && i - seen.min() < window) return true
         }
         return false
     }
