@@ -26,7 +26,8 @@ internal object PdfBoxTextExtractor {
     private const val MAIN_MEMORY_BYTES = 2L * 1024 * 1024
     const val DEFAULT_MAX_PAGES = 500
     const val DEFAULT_MAX_CHARS = 3_000_000
-    private const val MAX_EXTRACTION_TIME_MS = 60_000L
+    /** Stops reading pages after this long and keeps what was read, well inside the per-file indexing budget. */
+    private const val MAX_EXTRACTION_TIME_MS = 45_000L
 
     @Volatile
     private var initialised = false

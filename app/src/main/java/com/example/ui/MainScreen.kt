@@ -876,13 +876,19 @@ fun MainScreen(
                                         }
                                         FilledTonalButton(
                                             onClick = {
-                                                viewModel.dismissSafeMode()
-                                                Toast.makeText(context, "Safe mode dismissed", Toast.LENGTH_SHORT).show()
+                                                if (safeModeActive) {
+                                                    viewModel.dismissSafeMode()
+                                                    Toast.makeText(context, "Safe mode dismissed", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    // Quarantine alone keeps this card up; only unquarantining removes it.
+                                                    viewModel.clearQuarantine()
+                                                    Toast.makeText(context, "Skipped files will be retried", Toast.LENGTH_SHORT).show()
+                                                }
                                             },
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
-                                            Text("Dismiss Safe Mode", fontSize = 11.sp)
+                                            Text(if (safeModeActive) "Dismiss Safe Mode" else "Retry Skipped Files", fontSize = 11.sp)
                                         }
                                     }
                                 }
@@ -1206,7 +1212,7 @@ fun MainScreen(
                 } else {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "These documents triggered severe out-of-memory errors or process crashes. They have been isolated to protect app stability.",
+                            text = "These documents crashed the app, ran out of memory or timed out while indexing, so they are skipped. Tap Retry to try a file again.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -17,6 +17,15 @@ data class ChunkEmbeddingRow(
     val metadata: String
 )
 
+/** A chunk's text and metadata without its embedding BLOB, for showing a document's content. */
+data class ChunkContentRow(
+    val chunkIndex: Int,
+    val chunkText: String,
+    val metadata: String,
+    val timestamp: Long,
+    val tags: String
+)
+
 /** When a file was last indexed (its stored source timestamp) and how many chunks it currently has. */
 data class FileIndexStamp(
     val lastIndexed: Long?,
@@ -131,6 +140,10 @@ interface DocumentChunkDao {
 
     @Query("SELECT * FROM documents WHERE fileUri = :fileUri ORDER BY chunkIndex ASC")
     suspend fun getChunksForFile(fileUri: String): List<DocumentChunkEntity>
+
+    /** Same chunks as [getChunksForFile] without the embedding BLOBs, which are the bulk of each row. */
+    @Query("SELECT chunkIndex, chunkText, metadata, timestamp, tags FROM documents WHERE fileUri = :fileUri ORDER BY chunkIndex ASC")
+    suspend fun getChunkContentForFile(fileUri: String): List<ChunkContentRow>
 
     @Query("SELECT * FROM documents")
     suspend fun getAllChunks(): List<DocumentChunkEntity>

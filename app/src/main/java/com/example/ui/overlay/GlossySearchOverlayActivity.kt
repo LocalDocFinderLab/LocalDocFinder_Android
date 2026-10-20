@@ -506,13 +506,7 @@ fun GlossySearchOverlayScreen(
                                             glassOpacity = glassOpacity,
                                             onPreviewClick = { previewResult = item },
                                             onOpenClick = {
-                                                try {
-                                                    val openIntent = Intent(Intent.ACTION_VIEW).apply {
-                                                        data = Uri.parse(item.fileUri)
-                                                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
-                                                    }
-                                                    context.startActivity(openIntent)
-                                                } catch (_: Exception) {
+                                                if (!com.example.ui.components.DocumentOpener.open(context, item.fileUri, showErrors = false)) {
                                                     onOpenMainActivity(item.fileName)
                                                 }
                                             }

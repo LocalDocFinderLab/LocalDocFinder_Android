@@ -26,6 +26,11 @@ import java.util.Locale
 
 private const val TAG = "DocumentRepository"
 
+/** Per-file indexing budget: 2 minutes plus 20 seconds per MB, capped at 10 minutes. */
+private const val BASE_INDEX_TIMEOUT_MS = 120_000L
+private const val INDEX_TIMEOUT_MS_PER_MB = 20_000L
+private const val MAX_INDEX_TIMEOUT_MS = 600_000L
+
 data class IndexDocResult(
     val fileName: String,
     val fileUri: String,
@@ -42,8 +47,43 @@ data class DocumentPreviewContent(
     val isImage: Boolean = false,
     val fullText: String,
     val pdfPageCount: Int = 0,
-    val imageBitmap: Bitmap? = null
+    val imageBitmap: Bitmap? = null,
+    /** [fullText] cut into pieces small enough to lay out one at a time in a lazy list. */
+    val sections: List<String> = emptyList()
 )
+
+/** Longest piece of text shown as one block; a single huge Text freezes layout and scrolling. */
+private const val MAX_SECTION_CHARS = 1_500
+
+/** Cuts [text] at blank lines, then at spaces, so no piece is longer than [MAX_SECTION_CHARS]. */
+internal fun splitIntoSections(text: String): List<String> {
+    val sections = ArrayList<String>()
+    for (paragraph in text.split("\n\n")) {
+        var rest = paragraph.trim()
+        while (rest.length > MAX_SECTION_CHARS) {
+            var cut = rest.lastIndexOf(' ', MAX_SECTION_CHARS)
+            if (cut < MAX_SECTION_CHARS / 2) cut = MAX_SECTION_CHARS
+            sections.add(rest.substring(0, cut).trim())
+            rest = rest.substring(cut).trim()
+        }
+        if (rest.isNotEmpty()) sections.add(rest)
+    }
+    return sections
+}
+
+private fun countWords(text: String): Int {
+    var words = 0
+    var inWord = false
+    for (ch in text) {
+        if (ch.isWhitespace()) {
+            inWord = false
+        } else if (!inWord) {
+            inWord = true
+            words++
+        }
+    }
+    return words
+}
 
 /** One chunk of an indexed document with the overlap shared with the previous chunk trimmed away. */
 data class DocumentDetailChunk(
@@ -352,8 +392,12 @@ class DocumentRepository(
         com.example.engine.FailedDocumentRegistry.markProcessingStart(context, fileUri, fileName)
 
         try {
-            // Apply a strict per-file timeout (60 seconds) so no single PDF or corrupt file can freeze indexing
-            val result = kotlinx.coroutines.withTimeoutOrNull(60_000L) {
+            // Strict per-file timeout so no single corrupt file can freeze indexing. It grows with the file size:
+            // a flat 60s was too short for large PDFs, which were then quarantined after two timeouts.
+            val fileBytes = try { docFile.length() } catch (_: Throwable) { 0L }
+            val timeoutMs = (BASE_INDEX_TIMEOUT_MS + (fileBytes / (1024 * 1024)) * INDEX_TIMEOUT_MS_PER_MB)
+                .coerceAtMost(MAX_INDEX_TIMEOUT_MS)
+            val result = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 onSubProgress?.invoke("Parsing $fileName…", 0, 100)
                 val parseResult = documentParser.parseDocumentSafely(docFile)
                 if (parseResult is ParseResult.Failure) {
@@ -470,7 +514,7 @@ class DocumentRepository(
             if (result != null) {
                 result
             } else {
-                val timeoutReason = "Processing timed out after 60 seconds (abandoned to protect indexing pipeline)"
+                val timeoutReason = "Processing timed out after ${timeoutMs / 1000} seconds (abandoned to protect indexing pipeline)"
                 Log.w(TAG, "Document $fileName ($fileUri) timed out during indexing.")
                 com.example.engine.FailedDocumentRegistry.recordFailure(
                     context,
@@ -519,7 +563,7 @@ class DocumentRepository(
      * for the text, so it works even if the original file has since been moved or deleted).
      */
     suspend fun loadDocumentDetail(fileUriStr: String, fileName: String): DocumentDetail = withContext(Dispatchers.IO) {
-        val dbChunks = dao.getChunksForFile(fileUriStr)
+        val dbChunks = dao.getChunkContentForFile(fileUriStr)
         val stitchedTexts = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
         val chunks = dbChunks.mapIndexed { i, c ->
             DocumentDetailChunk(
@@ -528,7 +572,9 @@ class DocumentRepository(
                 pageLabel = com.example.engine.extraction.ChunkMetadata.pageLabel(c.metadata)
             )
         }
-        val fullText = chunks.joinToString(" ") { it.text }
+        // Chunks are shown joined by a space, so counts are taken per chunk instead of building one huge string.
+        val totalCharacters = chunks.sumOf { it.text.length } + (chunks.size - 1).coerceAtLeast(0)
+        val wordCount = chunks.sumOf { countWords(it.text) }
 
         val uri = Uri.parse(fileUriStr)
         var sizeBytes: Long? = null
@@ -564,8 +610,8 @@ class DocumentRepository(
             fileUri = fileUriStr,
             fileName = fileName,
             chunks = chunks,
-            totalCharacters = fullText.length,
-            wordCount = if (fullText.isBlank()) 0 else fullText.trim().split(Regex("""\s+""")).size,
+            totalCharacters = totalCharacters,
+            wordCount = wordCount,
             indexedAtMillis = dbChunks.maxOfOrNull { it.timestamp } ?: 0L,
             sourceModifiedMillis = modifiedMillis,
             sizeBytes = sizeBytes,
@@ -590,10 +636,16 @@ class DocumentRepository(
 
         if (isImage) {
             try {
+                // Decode at a reduced size: the preview is ~260dp tall, and full camera photos are huge.
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                while (bounds.outWidth / sample > 2048 || bounds.outHeight / sample > 2048) sample *= 2
+                val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                    imageBmp = android.graphics.BitmapFactory.decodeStream(stream)
+                    imageBmp = android.graphics.BitmapFactory.decodeStream(stream, null, options)
                 }
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
 
         if (isPdf) {
@@ -606,21 +658,24 @@ class DocumentRepository(
             } catch (_: Exception) {}
         }
 
-        // Try extracting preview text
-        val docFile = DocumentFile.fromSingleUri(context, uri)
-        if (docFile != null) {
-            val parseRes = documentParser.parseDocumentSafely(docFile)
-            if (parseRes is ParseResult.Success) {
-                textContent = parseRes.document.fullText
+        // The indexed text is already stored, so read it from there. Parsing the file again (PDF extraction,
+        // text recognition) made every preview take as long as indexing the file did.
+        var sections: List<String> = emptyList()
+        val dbChunks = try { dao.getChunkContentForFile(fileUriStr) } catch (_: Throwable) { emptyList() }
+        if (dbChunks.isNotEmpty()) {
+            sections = com.example.engine.ChunkStitcher.stitch(dbChunks.map { it.chunkText })
+                .flatMap { splitIntoSections(it) }
+            textContent = sections.joinToString("\n\n")
+        } else {
+            // Not indexed (yet): read the file itself.
+            val docFile = DocumentFile.fromSingleUri(context, uri)
+            if (docFile != null) {
+                val parseRes = documentParser.parseDocumentSafely(docFile)
+                if (parseRes is ParseResult.Success) {
+                    textContent = parseRes.document.fullText
+                }
             }
-        }
-
-        if (textContent.isBlank()) {
-            // Fallback to chunks saved in SQLite database
-            val dbChunks = dao.getChunksForFile(fileUriStr)
-            if (dbChunks.isNotEmpty()) {
-                textContent = dbChunks.joinToString("\n\n") { it.chunkText }
-            }
+            sections = splitIntoSections(textContent)
         }
 
         DocumentPreviewContent(
@@ -631,7 +686,8 @@ class DocumentRepository(
             isImage = isImage,
             fullText = textContent,
             pdfPageCount = pageCount,
-            imageBitmap = imageBmp
+            imageBitmap = imageBmp,
+            sections = sections
         )
     }
 
