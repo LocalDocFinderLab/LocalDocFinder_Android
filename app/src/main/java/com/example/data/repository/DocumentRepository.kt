@@ -26,6 +26,11 @@ import java.util.Locale
 
 private const val TAG = "DocumentRepository"
 
+/** Per-file indexing budget: 2 minutes plus 20 seconds per MB, capped at 10 minutes. */
+private const val BASE_INDEX_TIMEOUT_MS = 120_000L
+private const val INDEX_TIMEOUT_MS_PER_MB = 20_000L
+private const val MAX_INDEX_TIMEOUT_MS = 600_000L
+
 data class IndexDocResult(
     val fileName: String,
     val fileUri: String,
@@ -352,8 +357,12 @@ class DocumentRepository(
         com.example.engine.FailedDocumentRegistry.markProcessingStart(context, fileUri, fileName)
 
         try {
-            // Apply a strict per-file timeout (60 seconds) so no single PDF or corrupt file can freeze indexing
-            val result = kotlinx.coroutines.withTimeoutOrNull(60_000L) {
+            // Strict per-file timeout so no single corrupt file can freeze indexing. It grows with the file size:
+            // a flat 60s was too short for large PDFs, which were then quarantined after two timeouts.
+            val fileBytes = try { docFile.length() } catch (_: Throwable) { 0L }
+            val timeoutMs = (BASE_INDEX_TIMEOUT_MS + (fileBytes / (1024 * 1024)) * INDEX_TIMEOUT_MS_PER_MB)
+                .coerceAtMost(MAX_INDEX_TIMEOUT_MS)
+            val result = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 onSubProgress?.invoke("Parsing $fileName…", 0, 100)
                 val parseResult = documentParser.parseDocumentSafely(docFile)
                 if (parseResult is ParseResult.Failure) {
@@ -470,7 +479,7 @@ class DocumentRepository(
             if (result != null) {
                 result
             } else {
-                val timeoutReason = "Processing timed out after 60 seconds (abandoned to protect indexing pipeline)"
+                val timeoutReason = "Processing timed out after ${timeoutMs / 1000} seconds (abandoned to protect indexing pipeline)"
                 Log.w(TAG, "Document $fileName ($fileUri) timed out during indexing.")
                 com.example.engine.FailedDocumentRegistry.recordFailure(
                     context,
