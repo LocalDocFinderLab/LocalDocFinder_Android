@@ -110,6 +110,19 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- DocuVectorApp provides its own WorkManager configuration (Configuration.Provider), so WorkManager
+             must be initialized on demand instead of by androidx.startup at launch. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <!-- Required on Android 12+ (targetSdk 31+) so the TFLite GPU delegate can load the vendor OpenCL driver. -->
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
         <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
