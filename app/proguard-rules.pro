@@ -33,3 +33,24 @@
 -dontwarn com.tom_roush.pdfbox.**
 -dontwarn com.gemalto.jp2.**
 -dontwarn org.bouncycastle.**
+
+# --- Release shrinking (R8) ---
+# Shrink only: keep class and member names so reflection, JNI callbacks, resource lookups relative to class
+# packages (PDFBox) and stack traces from users keep working. Most of the size saving comes from removing
+# unused library code, not from renaming.
+-dontobfuscate
+-keepattributes SourceFile,LineNumberTable,Signature,InnerClasses,EnclosingMethod,*Annotation*
+
+# The app's own code is small; keep all of it (Room entities, WorkManager workers, widget, updater models,
+# classes used by reflection).
+-keep class com.example.** { *; }
+
+# ML Kit text recognition: components are registered by name and the native pipeline calls back into Java.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.internal.mlkit_**
+
+# Kotlin metadata (needed by anything reading Kotlin classes reflectively).
+-keep class kotlin.Metadata { *; }

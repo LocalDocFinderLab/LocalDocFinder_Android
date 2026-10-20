@@ -35,40 +35,66 @@ jobs:
 
       # With KEYSTORE_BASE64 / STORE_PASSWORD / KEY_PASSWORD repository secrets (key alias "upload") the
       # release build is signed with your key, so later releases install over earlier ones. Without them
-      # the APK is signed with a freshly generated debug key (fine for sideloading, but a later release
+      # it is signed with a freshly generated debug key (fine for sideloading, but a later release
       # signed with a different key must be installed after uninstalling the old one).
-      - name: Check for signing secrets
-        id: signing
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      - name: Create debug keystore
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then echo "signed=true" >> "$GITHUB_OUTPUT"; else echo "signed=false" >> "$GITHUB_OUTPUT"; fi
+          keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
+            -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Build signed release APK
-        if: steps.signing.outputs.signed == 'true'
+      - name: Build release APKs (shrunk, one per processor type + universal)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          KEYSTORE_PATH="$RUNNER_TEMP/release.jks" ./gradlew --no-daemon :app:assembleRelease
-          mkdir -p dist && cp app/build/outputs/apk/release/*.apk dist/
-
-      - name: Build debug-signed APK
-        if: steps.signing.outputs.signed != 'true'
-        run: |
-          keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
-            -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          ./gradlew --no-daemon :app:assembleDebug
-          mkdir -p dist && cp app/build/outputs/apk/debug/*.apk dist/
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+            echo "Signing with the release key"
+          else
+            unset STORE_PASSWORD KEY_PASSWORD
+            echo "::warning::No signing secrets: signing with a temporary debug key"
+          fi
+          ./gradlew --no-daemon :app:assembleRelease
+          mkdir -p dist
+          for f in app/build/outputs/apk/release/app-*-release.apk; do
+            abi="$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')"
+            cp "$f" "dist/LocalDocFinder-$abi.apk"
+          done
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: apk
           path: dist/*.apk
           if-no-files-found: error
+
+  smoke-test:
+    name: Smoke test on emulator
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: dist
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash .github/scripts/smoke-test.sh dist/LocalDocFinder-x86_64.apk
 
   unit-tests:
     name: Unit tests
@@ -99,7 +125,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: build
+    needs: [build, smoke-test]
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     permissions:
@@ -118,12 +144,19 @@ jobs:
         run: |
           # A pushed tag already exists; a manual run creates the tag on this commit when the release is made.
           if [ "$EVENT" = "workflow_dispatch" ]; then TAG_FLAG="--target $GITHUB_SHA"; else TAG_FLAG="--verify-tag"; fi
-          APK="LocalDocFinder-${TAG}.apk"
-          cp dist/*.apk "$APK"
-          sha256sum "$APK" > "$APK.sha256"
+          mkdir -p out
+          for f in dist/LocalDocFinder-*.apk; do
+            abi="${f#dist/LocalDocFinder-}"; abi="${abi%.apk}"
+            cp "$f" "out/LocalDocFinder-${TAG}-${abi}.apk"
+          done
+          (cd out && sha256sum *.apk > SHA256SUMS.txt)
           NOTES="release-notes/${TAG}.md"
-          if [ -f "$NOTES" ]; then
-            gh release create "$TAG" "$APK" "$APK.sha256" $TAG_FLAG --title "LocalDoc Finder ${TAG}" --notes-file "$NOTES"
-          else
-            gh release create "$TAG" "$APK" "$APK.sha256" $TAG_FLAG --title "LocalDoc Finder ${TAG}" --generate-notes
-          fi
+          if [ -f "$NOTES" ]; then NOTE_FLAGS=(--notes-file "$NOTES"); else NOTE_FLAGS=(--generate-notes); fi
+          # Older app versions download the FIRST .apk of a release, so the universal APK (runs on every
+          # phone) is attached on its own first; the per-processor APKs are added after it.
+          UNIVERSAL="out/LocalDocFinder-${TAG}-universal.apk"
+          gh release create "$TAG" "$UNIVERSAL" $TAG_FLAG --title "LocalDoc Finder ${TAG}" "${NOTE_FLAGS[@]}"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            gh release upload "$TAG" "out/LocalDocFinder-${TAG}-${abi}.apk"
+          done
+          gh release upload "$TAG" out/SHA256SUMS.txt

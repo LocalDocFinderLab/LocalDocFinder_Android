@@ -141,7 +141,11 @@ test (`WordPieceTokenizerTest`), pooling, page-aware chunking and the model mana
 
 ## Releases
 
-Pushing a tag such as `v1.1.0` runs `.github/workflows/android-release.yml`, which builds the APK and publishes a
-GitHub release with the APK attached, using `release-notes/<tag>.md` as the release text. The in-app updater reads
+Pushing a tag such as `v1.2.1` (or running the workflow manually with a `tag` input) runs
+`.github/workflows/android-release.yml`. It builds the shrunk release APKs (one per processor type,
+`arm64-v8a` / `armeabi-v7a` / `x86_64`, plus a universal APK), smoke-tests the x86_64 APK on an emulator
+(`.github/scripts/smoke-test.sh`: PDF text, scanned-PDF OCR and photo OCR must work, no crash), and then publishes a
+GitHub release with all APKs and `SHA256SUMS.txt`, using `release-notes/<tag>.md` as the release text. The in-app
+updater downloads the APK matching the phone's processor. The in-app updater reads
 those notes. Add `KEYSTORE_BASE64`, `STORE_PASSWORD` and `KEY_PASSWORD` (key alias `upload`) as repository secrets to
 sign with your own key so each release installs over the previous one; without them a debug key is generated per build.

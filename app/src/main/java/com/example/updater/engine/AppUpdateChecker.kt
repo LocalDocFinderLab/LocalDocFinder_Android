@@ -84,15 +84,13 @@ class AppUpdateChecker(
             var apkFileName = "localdoc-update.apk"
             var apkSize = 0L
 
-            for (i in 0 until assets.length()) {
+            // One APK per processor type: take the one built for this phone (falls back to the universal APK).
+            val names = (0 until assets.length()).map { assets.getJSONObject(it).optString("name", "") }
+            ApkAssetChooser.choose(names, android.os.Build.SUPPORTED_ABIS.toList())?.let { i ->
                 val asset = assets.getJSONObject(i)
-                val name = asset.optString("name", "")
-                if (name.endsWith(".apk", ignoreCase = true)) {
-                    apkDownloadUrl = asset.optString("browser_download_url")
-                    apkFileName = name
-                    apkSize = asset.optLong("size", 0L)
-                    break
-                }
+                apkDownloadUrl = asset.optString("browser_download_url")
+                apkFileName = asset.optString("name", apkFileName)
+                apkSize = asset.optLong("size", 0L)
             }
 
             // If no direct APK asset in release, fall back to release page or direct zipball

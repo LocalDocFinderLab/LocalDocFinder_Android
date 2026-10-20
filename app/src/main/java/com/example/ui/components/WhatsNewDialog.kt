@@ -32,6 +32,10 @@ object WhatsNew {
 
     val features: List<Item> = listOf(
         Item(
+            "Much smaller download",
+            "Each release now has an APK for your phone's processor type, with unused code removed. In-app updates pick the right one automatically."
+        ),
+        Item(
             "Find files by name",
             "Typing a file's name finds it first, even with typos or glued-together names like Q3_TaxReport2023.pdf."
         ),
@@ -58,6 +62,7 @@ object WhatsNew {
     )
 
     val development: List<String> = listOf(
+        "Release builds are shrunk with R8 and split per processor type (arm64-v8a, armeabi-v7a, x86_64) plus a universal APK; CI smoke-tests the shrunk APK on an emulator.",
         "New search ranker (engine/search): file-name matching, whole-word BM25 with phrase and coverage scoring, calibrated vector scores, one result per file.",
         "New Office readers (engine/office) for .doc, .xls, .xlsx, .ppt and RTF, without Apache POI.",
         "On-device OCR with ML Kit's bundled text recognizer for images and scanned PDFs.",

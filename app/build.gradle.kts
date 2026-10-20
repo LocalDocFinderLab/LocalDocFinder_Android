@@ -13,8 +13,8 @@ android {
     minSdk = 28
     targetSdk = 36
     // versionCode follows the in-app updater's tag scheme (major*10000 + minor*100 + patch), so v1.1.0 -> 10100.
-    versionCode = 10200
-    versionName = "1.2.0"
+    versionCode = 10201
+    versionName = "1.2.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -38,9 +38,14 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8 removes unused library code (most of the size of the old builds). Names are kept
+      // (-dontobfuscate in proguard-rules.pro) so reflection and stack traces keep working.
+      isMinifyEnabled = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      // Signed with your key when KEYSTORE_PATH / STORE_PASSWORD are set (CI secrets), otherwise with the debug
+      // keystore so a release build still installs.
+      val hasReleaseKey = !System.getenv("KEYSTORE_PATH").isNullOrBlank() && !System.getenv("STORE_PASSWORD").isNullOrBlank()
+      signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debugConfig")
     }
     debug { signingConfig = signingConfigs.getByName("debugConfig") }
   }
@@ -53,6 +58,16 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  // One APK per processor type, so a phone downloads only the native code it can run (the OCR engine alone
+  // is ~11 MB per type), plus a universal APK that runs everywhere. 32-bit x86 (old emulators only) is left out.
+  splits {
+    abi {
+      isEnable = true
+      reset()
+      include("arm64-v8a", "armeabi-v7a", "x86_64")
+      isUniversalApk = true
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true

@@ -49,7 +49,7 @@ class ImageTextRecognizer(private val context: Context) {
             return ""
         }
         return try {
-            recognize(bitmap)
+            recognize(bitmap).also { if (it.isNotEmpty()) Log.i(TAG, "Recognized ${it.length} characters in $uri") }
         } finally {
             bitmap.recycle()
         }
@@ -97,6 +97,7 @@ class ImageTextRecognizer(private val context: Context) {
             if (t is OutOfMemoryError) System.gc()
             Log.w(TAG, "Could not read scanned PDF $uri: ${t.message}")
         }
+        if (pages.isNotEmpty()) Log.i(TAG, "Read ${pages.size} scanned page(s) from $uri")
         return pages
     }
 
