@@ -18,6 +18,8 @@ concurrency:
 jobs:
   build:
     name: Build APK
+    # Branch pushes only run the unit tests; APKs are built (and smoke-tested) for releases and manual runs.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +80,8 @@ jobs:
 
   smoke-test:
     name: Smoke test on emulator
+    # Branch pushes only run the unit tests; APKs are built (and smoke-tested) for releases and manual runs.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
