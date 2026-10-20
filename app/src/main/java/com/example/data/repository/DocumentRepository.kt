@@ -564,7 +564,8 @@ class DocumentRepository(
                     context,
                     fileUri,
                     fileName,
-                    timeoutReason
+                    timeoutReason,
+                    isFatalCrash = true
                 )
                 IndexDocResult(
                     fileName = fileName,

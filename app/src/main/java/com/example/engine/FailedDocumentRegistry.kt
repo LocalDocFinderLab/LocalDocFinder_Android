@@ -101,6 +101,8 @@ object FailedDocumentRegistry {
             _safeModeActive.value = false
             _crashAvertedNotice.value = "Quarantined '$inFlightName' to prevent crashes. Indexing can proceed safely."
         } else {
+            // A file that crashed the app is quarantined on its own; it must never leave the whole app in safe mode.
+            prefs.edit().putBoolean(KEY_SAFE_MODE, false).apply()
             _safeModeActive.value = false
             _crashAvertedNotice.value = prefs.getString(KEY_CRASH_AVERTED_MSG, null)
         }
@@ -169,7 +171,7 @@ object FailedDocumentRegistry {
 
     /**
      * Called by global uncaught exception handler when an unhandled crash or OOM occurs.
-     * Quarantines the current in-flight file and engages Safe Mode immediately.
+     * Quarantines only the current in-flight file; auto-scan of every other file continues.
      */
     fun handleUncaughtCrash(context: Context, throwable: Throwable) {
         val app = context.applicationContext ?: context
@@ -188,14 +190,12 @@ object FailedDocumentRegistry {
                 .remove(KEY_IN_PROGRESS_URI)
                 .remove(KEY_IN_PROGRESS_NAME)
                 .remove(KEY_IN_PROGRESS_TIME)
-                .putBoolean(KEY_SAFE_MODE, true)
+                .putBoolean(KEY_SAFE_MODE, false)
                 .putString(
                     KEY_CRASH_AVERTED_MSG,
-                    "Crash loop averted: '$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined."
+                    "'$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined. Other files keep indexing."
                 )
                 .commit()
-            _safeModeActive.value = true
-            _crashAvertedNotice.value = "Safe Mode: '$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined."
         }
     }
 

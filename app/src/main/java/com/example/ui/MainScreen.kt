@@ -1396,6 +1396,15 @@ fun MainScreen(
     }
 
     if (showWhatsNew) {
+        // Mark it seen as soon as it is shown, so a crash or restart before "Got it" cannot show it again.
+        LaunchedEffect(Unit) {
+            try {
+                context.getSharedPreferences("whats_new_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt("last_seen_version_code", com.example.BuildConfig.VERSION_CODE)
+                    .commit()
+            } catch (_: Exception) {}
+        }
         WhatsNewDialog(
             versionName = com.example.BuildConfig.VERSION_NAME,
             onDismiss = {
