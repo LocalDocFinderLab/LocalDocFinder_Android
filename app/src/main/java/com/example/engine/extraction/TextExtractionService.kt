@@ -39,7 +39,12 @@ class TextExtractionService(private val context: Context) {
 
         try {
             PdfBoxTextExtractor.ensureInitialised(context)
-            val result = openStream(uri).use { PdfBoxTextExtractor.extract(it, keepGoing = keepGoing) }
+            val localFile = localFile(uri)
+            val result = if (localFile != null) {
+                PdfBoxTextExtractor.extract(localFile, keepGoing = keepGoing)
+            } else {
+                openStream(uri).use { PdfBoxTextExtractor.extract(it, keepGoing = keepGoing) }
+            }
             val cleaned = cleanPages(result)
             if (!cleaned.isEmpty) {
                 Log.i(TAG, "PDFBox extracted ${cleaned.pages.size}/${result.metadata.pageCount} page(s) from $uri")
@@ -92,6 +97,14 @@ class TextExtractionService(private val context: Context) {
             .filter { it.text.length >= MIN_PAGE_CHARS }
         return doc.copy(pages = pages)
     }
+
+    /** The file behind a `file://` URI, which PDFBox can read in place; null for content URIs. */
+    private fun localFile(uri: Uri): File? =
+        if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
+            File(uri.path ?: uri.toString().removePrefix("file://")).takeIf { it.isFile }
+        } else {
+            null
+        }
 
     private fun openStream(uri: Uri): InputStream =
         if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {

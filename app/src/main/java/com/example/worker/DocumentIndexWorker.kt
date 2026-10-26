@@ -313,7 +313,11 @@ class DocumentIndexWorker(
                             val done = completed.get()
                             val percent = (((done + subFactor) / total.toFloat()) * 100).toInt().coerceIn(0, 99)
                             val ordinal = (done + 1).coerceAtMost(total)
-                            postProgress(percent, title(ordinal, total, percent), withSpeed("$fileName • $step"))
+                            // Progress callbacks fire per embedding batch; the notification and WorkManager's
+                            // progress store (a database write each) are only updated a couple of times a second.
+                            if (!postProgress(percent, title(ordinal, total, percent), withSpeed("$fileName • $step"))) {
+                                return@indexDocumentSafely
+                            }
                             try {
                                 setProgressAsync(
                                     workDataOf(
@@ -331,6 +335,8 @@ class DocumentIndexWorker(
                         } else {
                             failures.add("$fileName: ${result.errorMessage ?: "Parsing failure"}")
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (t: Throwable) {
                         failures.add("$fileName: Unexpected failure (${t.message ?: t.javaClass.simpleName})")
                     } finally {
@@ -376,12 +382,15 @@ class DocumentIndexWorker(
     /**
      * Updates the notification's progress safely via NotificationManager directly.
      * Throttled to twice per second to prevent notification binder queue congestion.
+     *
+     * @return true when the update was posted, false when it was dropped by the throttle.
      */
-    private fun postProgress(progressPercent: Int, title: String, message: String) {
-        if (isStopped) return
+    private fun postProgress(progressPercent: Int, title: String, message: String): Boolean {
+        if (isStopped) return false
         val now = System.currentTimeMillis()
-        if (now - lastPostedAtMillis < 500L) return
+        if (now - lastPostedAtMillis < 500L) return false
         lastPostedAtMillis = now
         IndexingNotifier.show(context, IndexingNotifier.ID_DOCUMENT_INDEX, title, message, progressPercent)
+        return true
     }
 }

@@ -346,8 +346,7 @@ class DocumentPreparationService : Service() {
 
         // Persist to Room database with SQLite FTS index
         onProgress?.invoke("Saving vectors and full-text index to SQLite…", 95, 100)
-        dao.deleteFileRecord(prepared.fileUri)
-        dao.insertChunksWithFts(finalEntities)
+        dao.replaceFileChunks(prepared.fileUri, finalEntities)
 
         _ingestionEvents.emit(IngestionEvent.StoredInDatabase(fileName, finalEntities.size))
         _ingestionEvents.emit(IngestionEvent.Completed(fileName, finalEntities.size))

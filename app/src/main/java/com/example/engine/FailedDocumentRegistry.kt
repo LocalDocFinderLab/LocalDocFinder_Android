@@ -38,8 +38,18 @@ object FailedDocumentRegistry {
     private const val KEY_IN_PROGRESS_URI = "in_flight_uri"
     private const val KEY_IN_PROGRESS_NAME = "in_flight_name"
     private const val KEY_IN_PROGRESS_TIME = "in_flight_timestamp"
+    /** Every file being indexed right now (several run in parallel), as a JSON object uri -> name. */
+    private const val KEY_IN_FLIGHT = "in_flight_documents_json"
     private const val KEY_SAFE_MODE = "safe_mode_engaged"
     private const val KEY_CRASH_AVERTED_MSG = "crash_averted_message"
+    private const val KEY_REGISTRY_VERSION = "registry_version"
+
+    /**
+     * Version 2 stopped quarantining a file after a single timeout or a single process death. Upgrading
+     * releases the files that older versions quarantined for only those reasons, so they get retried.
+     */
+    private const val REGISTRY_VERSION = 2
+    private val RETRYABLE_REASON_PREFIXES = listOf("Processing timed out", "Process terminated unexpectedly")
 
     const val MAX_FAILURES_BEFORE_QUARANTINE = 2
 
@@ -56,6 +66,13 @@ object FailedDocumentRegistry {
     private var isInitialized = false
 
     /**
+     * In-memory copy of the stored failure map. [isQuarantined] runs for every candidate file of every scan, and
+     * parsing the JSON from SharedPreferences each time made large scans quadratic.
+     */
+    @Volatile
+    private var cachedMap: Map<String, QuarantinedDocument>? = null
+
+    /**
      * Initializes the registry, checks for in-flight crashes from previous process runs,
      * and quarantines any document that caused an abnormal termination.
      */
@@ -64,42 +81,47 @@ object FailedDocumentRegistry {
         val app = context.applicationContext ?: context
         val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // 1. Crash canary check: Was the app in the middle of processing a document when it died?
-        val inFlightUri = prefs.getString(KEY_IN_PROGRESS_URI, null)
-        val inFlightName = prefs.getString(KEY_IN_PROGRESS_NAME, null) ?: "Document"
-        val inFlightTime = prefs.getLong(KEY_IN_PROGRESS_TIME, 0L)
+        if (prefs.getInt(KEY_REGISTRY_VERSION, 1) < REGISTRY_VERSION) {
+            val map = loadFailedMap(app)
+            val released = map.values.filter { doc -> RETRYABLE_REASON_PREFIXES.any { doc.reason.startsWith(it) } }
+            if (released.isNotEmpty()) {
+                released.forEach { map.remove(it.fileUri) }
+                saveFailedMap(app, map)
+                Log.i(TAG, "Released ${released.size} file(s) quarantined after a timeout or process death")
+            }
+            prefs.edit().putInt(KEY_REGISTRY_VERSION, REGISTRY_VERSION).apply()
+        }
 
-        if (!inFlightUri.isNullOrBlank()) {
-            val elapsed = System.currentTimeMillis() - inFlightTime
-            Log.w(
-                TAG,
-                "Crash canary triggered! Process died while processing '$inFlightName' ($inFlightUri). " +
-                        "Elapsed: ${elapsed}ms. Quarantining file to prevent crash loop."
-            )
+        // 1. Crash canary check: Was the app in the middle of processing documents when it died?
+        val inFlight = loadInFlight(prefs)
+        if (inFlight.isNotEmpty()) {
+            Log.w(TAG, "Crash canary triggered! Process died while processing ${inFlight.values}.")
 
-            // Immediately quarantine this file as a hard crash
-            recordFailureDirect(
-                app,
-                inFlightUri,
-                inFlightName,
-                "Process terminated unexpectedly while indexing this document (OOM or native crash averted)",
-                isFatalCrash = true
-            )
+            // The process can also die for reasons that have nothing to do with the file (the user swiped the app
+            // away, the system reclaimed memory, an update was installed), and large files are the ones most
+            // likely to be in flight then. So a death counts as one failure; a second one quarantines the file.
+            for ((uri, name) in inFlight) {
+                recordFailureDirect(
+                    app,
+                    uri,
+                    name,
+                    "Process terminated unexpectedly while indexing this document (OOM or native crash averted)",
+                    isFatalCrash = false
+                )
+            }
+            val names = inFlight.values.joinToString(", ") { "'$it'" }
 
-            // Clear in-flight markers
             prefs.edit()
-                .remove(KEY_IN_PROGRESS_URI)
-                .remove(KEY_IN_PROGRESS_NAME)
-                .remove(KEY_IN_PROGRESS_TIME)
+                .remove(KEY_IN_FLIGHT)
                 .putBoolean(KEY_SAFE_MODE, false)
                 .putString(
                     KEY_CRASH_AVERTED_MSG,
-                    "Crash averted: '$inFlightName' caused an unexpected termination and was quarantined. Continuing with other files."
+                    "Indexing of $names was interrupted. It will be retried once, then skipped if it fails again."
                 )
                 .apply()
 
             _safeModeActive.value = false
-            _crashAvertedNotice.value = "Quarantined '$inFlightName' to prevent crashes. Indexing can proceed safely."
+            _crashAvertedNotice.value = "Indexing of $names was interrupted and will be retried once."
         } else {
             // A file that crashed the app is quarantined on its own; it must never leave the whole app in safe mode.
             prefs.edit().putBoolean(KEY_SAFE_MODE, false).apply()
@@ -116,7 +138,7 @@ object FailedDocumentRegistry {
      */
     fun isQuarantined(context: Context, fileUri: String): Boolean {
         val app = context.applicationContext ?: context
-        val map = loadFailedMap(app)
+        val map = cachedMap ?: loadFailedMap(app)
         val doc = map[fileUri] ?: return false
         return doc.failureCount >= MAX_FAILURES_BEFORE_QUARANTINE || doc.isHardCrash
     }
@@ -144,59 +166,94 @@ object FailedDocumentRegistry {
      * Marks the beginning of indexing for [fileUri] (in-flight crash canary).
      * Synchronously committed so it is recorded immediately even if an immediate OOM or native crash occurs.
      */
+    @Synchronized
     fun markProcessingStart(context: Context, fileUri: String, fileName: String) {
-        val app = context.applicationContext ?: context
-        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString(KEY_IN_PROGRESS_URI, fileUri)
-            .putString(KEY_IN_PROGRESS_NAME, fileName)
-            .putLong(KEY_IN_PROGRESS_TIME, System.currentTimeMillis())
-            .commit()
+        val prefs = prefs(context)
+        val inFlight = loadInFlight(prefs)
+        inFlight[fileUri] = fileName
+        saveInFlight(prefs, inFlight)
     }
 
     /**
      * Marks completion of indexing for [fileUri] (clearing in-flight crash canary).
      */
+    @Synchronized
     fun markProcessingEnd(context: Context, fileUri: String) {
-        val app = context.applicationContext ?: context
-        val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getString(KEY_IN_PROGRESS_URI, null)
-        if (current == fileUri) {
-            prefs.edit()
-                .remove(KEY_IN_PROGRESS_URI)
-                .remove(KEY_IN_PROGRESS_NAME)
-                .remove(KEY_IN_PROGRESS_TIME)
-                .commit()
+        val prefs = prefs(context)
+        val inFlight = loadInFlight(prefs)
+        if (inFlight.remove(fileUri) != null) {
+            saveInFlight(prefs, inFlight)
         }
     }
 
     /**
      * Called by global uncaught exception handler when an unhandled crash or OOM occurs.
-     * Quarantines only the current in-flight file; auto-scan of every other file continues.
+     * Counts a failure for each in-flight file; auto-scan of every other file continues.
      */
+    @Synchronized
     fun handleUncaughtCrash(context: Context, throwable: Throwable) {
         val app = context.applicationContext ?: context
-        val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val inFlightUri = prefs.getString(KEY_IN_PROGRESS_URI, null)
-        val inFlightName = prefs.getString(KEY_IN_PROGRESS_NAME, null) ?: "Document"
-        if (!inFlightUri.isNullOrBlank()) {
+        val prefs = prefs(app)
+        val inFlight = loadInFlight(prefs)
+        if (inFlight.isEmpty()) return
+        // With several files in flight the culprit is unknown, and the crash may not be any file's fault.
+        // Only an OutOfMemoryError during a single file is blamed on that file outright.
+        val blameOne = inFlight.size == 1 && throwable is OutOfMemoryError
+        for ((uri, name) in inFlight) {
             recordFailureDirect(
                 app,
-                inFlightUri,
-                inFlightName,
+                uri,
+                name,
                 "Fatal crash: ${throwable.localizedMessage ?: throwable.javaClass.simpleName}",
-                isFatalCrash = true
+                isFatalCrash = blameOne
             )
-            prefs.edit()
-                .remove(KEY_IN_PROGRESS_URI)
-                .remove(KEY_IN_PROGRESS_NAME)
-                .remove(KEY_IN_PROGRESS_TIME)
-                .putBoolean(KEY_SAFE_MODE, false)
-                .putString(
-                    KEY_CRASH_AVERTED_MSG,
-                    "'$inFlightName' crashed (${throwable.javaClass.simpleName}) and was quarantined. Other files keep indexing."
-                )
-                .commit()
         }
+        val names = inFlight.values.joinToString(", ") { "'$it'" }
+        prefs.edit()
+            .remove(KEY_IN_FLIGHT)
+            .putBoolean(KEY_SAFE_MODE, false)
+            .putString(
+                KEY_CRASH_AVERTED_MSG,
+                "Indexing of $names crashed (${throwable.javaClass.simpleName}). Other files keep indexing."
+            )
+            .commit()
+    }
+
+    private fun prefs(context: Context) =
+        (context.applicationContext ?: context).getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun loadInFlight(prefs: android.content.SharedPreferences): MutableMap<String, String> {
+        val map = mutableMapOf<String, String>()
+        try {
+            prefs.getString(KEY_IN_FLIGHT, null)?.let { json ->
+                val obj = JSONObject(json)
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next().toString()
+                    map[key] = obj.optString(key, "Document")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error loading in-flight documents: ${e.message}")
+        }
+        // Single-file marker written by older versions.
+        prefs.getString(KEY_IN_PROGRESS_URI, null)?.takeIf { it.isNotBlank() }?.let { uri ->
+            map[uri] = prefs.getString(KEY_IN_PROGRESS_NAME, null) ?: "Document"
+        }
+        return map
+    }
+
+    private fun saveInFlight(prefs: android.content.SharedPreferences, inFlight: Map<String, String>) {
+        val editor = prefs.edit()
+            .remove(KEY_IN_PROGRESS_URI)
+            .remove(KEY_IN_PROGRESS_NAME)
+            .remove(KEY_IN_PROGRESS_TIME)
+        if (inFlight.isEmpty()) {
+            editor.remove(KEY_IN_FLIGHT)
+        } else {
+            editor.putString(KEY_IN_FLIGHT, JSONObject(inFlight).toString())
+        }
+        editor.commit()
     }
 
     /**
@@ -285,12 +342,14 @@ object FailedDocumentRegistry {
         val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .remove(KEY_FAILED_DOCS)
+            .remove(KEY_IN_FLIGHT)
             .remove(KEY_IN_PROGRESS_URI)
             .remove(KEY_IN_PROGRESS_NAME)
             .remove(KEY_IN_PROGRESS_TIME)
             .remove(KEY_SAFE_MODE)
             .remove(KEY_CRASH_AVERTED_MSG)
             .apply()
+        cachedMap = emptyMap()
         _quarantinedCount.value = 0
         _safeModeActive.value = false
         _crashAvertedNotice.value = null
@@ -302,6 +361,13 @@ object FailedDocumentRegistry {
     }
 
     private fun loadFailedMap(context: Context): MutableMap<String, QuarantinedDocument> {
+        cachedMap?.let { return it.toMutableMap() }
+        val map = readFailedMap(context)
+        cachedMap = map
+        return map.toMutableMap()
+    }
+
+    private fun readFailedMap(context: Context): MutableMap<String, QuarantinedDocument> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val jsonStr = prefs.getString(KEY_FAILED_DOCS, null) ?: return mutableMapOf()
         val map = mutableMapOf<String, QuarantinedDocument>()
@@ -339,6 +405,7 @@ object FailedDocumentRegistry {
                 array.put(obj)
             }
             prefs.edit().putString(KEY_FAILED_DOCS, array.toString()).apply()
+            cachedMap = HashMap(map)
         } catch (e: Exception) {
             Log.e(TAG, "Error saving failed documents map: ${e.message}")
         }

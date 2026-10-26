@@ -9,6 +9,7 @@ import com.example.engine.ParseResult
 import com.example.engine.extraction.TextExtractionService
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -109,6 +110,92 @@ class TextExtractionServiceTest {
     fun `extractPdf never throws on a missing file`() {
         val doc = TextExtractionService(context).extractPdf(Uri.fromFile(File(context.cacheDir, "nope.pdf")))
         assertTrue(doc.isEmpty)
+    }
+
+    /** Words placed by position with no space glyph between them (as LaTeX and most report tools write them). */
+    private val positionedWordsPdf = """
+        %PDF-1.4
+        1 0 obj
+        << /Type /Catalog /Pages 2 0 R >>
+        endobj
+        2 0 obj
+        << /Type /Pages /Kids [3 0 R 5 0 R 6 0 R] /Count 3 >>
+        endobj
+        3 0 obj
+        << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 8 0 R >> >> >>
+        endobj
+        4 0 obj
+        << /Length 70 >>
+        stream
+        BT
+        /F1 12 Tf
+        50 750 Td
+        (Positioned) Tj
+        80 0 Td
+        (words) Tj
+        ET
+        endstream
+        endobj
+        5 0 obj
+        << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>
+        endobj
+        6 0 obj
+        << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 7 0 R /Resources << /Font << /F1 8 0 R >> >> >>
+        endobj
+        7 0 obj
+        << /Length 70 >>
+        stream
+        BT
+        /F1 12 Tf
+        50 750 Td
+        (Third) Tj
+        50 0 Td
+        (page) Tj
+        ET
+        endstream
+        endobj
+        8 0 obj
+        << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+        endobj
+        trailer
+        << /Size 9 /Root 1 0 R >>
+        %%EOF
+    """.trimIndent()
+
+    @Test
+    fun `extractPdf keeps the space between words that are only positioned apart`() {
+        val file = File(context.cacheDir, "positioned_words.pdf").apply {
+            writeBytes(positionedWordsPdf.toByteArray(Charsets.ISO_8859_1))
+        }
+        try {
+            val doc = TextExtractionService(context).extractPdf(Uri.fromFile(file))
+            val text = doc.fullText
+            assertTrue(text, text.contains("Positioned words"))
+            assertTrue(text, text.contains("Third page"))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `extractPdf numbers pages correctly after a page with no content`() {
+        val file = File(context.cacheDir, "empty_middle_page.pdf").apply {
+            writeBytes(positionedWordsPdf.toByteArray(Charsets.ISO_8859_1))
+        }
+        try {
+            val doc = TextExtractionService(context).extractPdf(Uri.fromFile(file))
+            assertEquals(doc.pages.toString(), 3, doc.pages.first { it.text.contains("Third") }.number)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `chunker splits text without spaces into chunks of bounded size`() {
+        val parser = DocumentParser(context)
+        val chunks = parser.recursiveTextChunk("x".repeat(25_000), "file:///minified.json")
+        assertTrue(chunks.size > 1)
+        assertTrue(chunks.joinToString { it.text.length.toString() }, chunks.all { it.text.length <= parser.targetChunkCharacters })
     }
 
     @Test

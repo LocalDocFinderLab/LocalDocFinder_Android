@@ -7,8 +7,9 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import java.io.File
 import java.io.InputStream
-import java.io.StringWriter
+import java.io.Writer
 
 /**
  * PDF text extraction backed by PDFBox-Android (the Android port of Apache PDFBox).
@@ -24,10 +25,13 @@ internal object PdfBoxTextExtractor {
 
     /** PDFBox keeps this much of the file in RAM and spills the rest to disk scratch cache. */
     private const val MAIN_MEMORY_BYTES = 2L * 1024 * 1024
-    const val DEFAULT_MAX_PAGES = 500
-    const val DEFAULT_MAX_CHARS = 3_000_000
-    /** Stops reading pages after this long and keeps what was read, well inside the per-file indexing budget. */
-    private const val MAX_EXTRACTION_TIME_MS = 45_000L
+    const val DEFAULT_MAX_PAGES = 2_000
+    const val DEFAULT_MAX_CHARS = 4_000_000
+    /**
+     * Stops reading pages after this long and keeps what was read. The caller's per-file budget also stops
+     * extraction through `keepGoing`, so this is only a backstop.
+     */
+    private const val MAX_EXTRACTION_TIME_MS = 180_000L
 
     @Volatile
     private var initialised = false
@@ -55,57 +59,76 @@ internal object PdfBoxTextExtractor {
         maxPages: Int = DEFAULT_MAX_PAGES,
         maxChars: Int = DEFAULT_MAX_CHARS,
         keepGoing: () -> Boolean = { true }
+    ): ExtractedDocument = PDDocument.load(input, memorySetting()).use { extract(it, maxPages, maxChars, keepGoing) }
+
+    /**
+     * Same as the stream version, but PDFBox reads the file in place instead of first copying all of it into
+     * its scratch buffer, which matters for PDFs of tens of megabytes.
+     */
+    fun extract(
+        file: File,
+        maxPages: Int = DEFAULT_MAX_PAGES,
+        maxChars: Int = DEFAULT_MAX_CHARS,
+        keepGoing: () -> Boolean = { true }
+    ): ExtractedDocument = PDDocument.load(file, memorySetting()).use { extract(it, maxPages, maxChars, keepGoing) }
+
+    private fun memorySetting(): MemoryUsageSetting = try {
+        val setting = MemoryUsageSetting.setupMixed(MAIN_MEMORY_BYTES)
+        tempDir?.let { setting.setTempDir(it) }
+        setting
+    } catch (_: Throwable) {
+        MemoryUsageSetting.setupMainMemoryOnly(MAIN_MEMORY_BYTES)
+    }
+
+    private fun extract(
+        doc: PDDocument,
+        maxPages: Int,
+        maxChars: Int,
+        keepGoing: () -> Boolean
     ): ExtractedDocument {
-        val memorySetting = try {
-            val setting = MemoryUsageSetting.setupMixed(MAIN_MEMORY_BYTES)
-            tempDir?.let { setting.setTempDir(it) }
-            setting
-        } catch (_: Throwable) {
-            MemoryUsageSetting.setupMainMemoryOnly(MAIN_MEMORY_BYTES)
-        }
+        val info = doc.documentInformation
+        val totalPages = doc.numberOfPages
+        val metadata = ExtractedMetadata(
+            title = info?.title?.trim()?.takeIf { it.isNotEmpty() },
+            author = info?.author?.trim()?.takeIf { it.isNotEmpty() },
+            subject = info?.subject?.trim()?.takeIf { it.isNotEmpty() },
+            keywords = info?.keywords?.trim()?.takeIf { it.isNotEmpty() },
+            pageCount = totalPages
+        )
 
-        PDDocument.load(input, memorySetting).use { doc ->
-            val info = doc.documentInformation
-            val totalPages = doc.numberOfPages
-            val metadata = ExtractedMetadata(
-                title = info?.title?.trim()?.takeIf { it.isNotEmpty() },
-                author = info?.author?.trim()?.takeIf { it.isNotEmpty() },
-                subject = info?.subject?.trim()?.takeIf { it.isNotEmpty() },
-                keywords = info?.keywords?.trim()?.takeIf { it.isNotEmpty() },
-                pageCount = totalPages
-            )
+        val pageLimit = minOf(totalPages, maxPages)
+        val stripper = StreamingPageTextStripper(
+            maxChars = maxChars,
+            maxTimeMs = MAX_EXTRACTION_TIME_MS,
+            keepGoing = keepGoing
+        )
 
-            val pageLimit = minOf(totalPages, maxPages)
-            val stripper = StreamingPageTextStripper(
-                maxPages = pageLimit,
-                maxChars = maxChars,
-                maxTimeMs = MAX_EXTRACTION_TIME_MS,
-                keepGoing = keepGoing
-            )
+        stripper.startPage = 1
+        stripper.endPage = pageLimit
 
-            stripper.startPage = 1
-            stripper.endPage = pageLimit
-
-            try {
-                stripper.writeText(doc, StringWriter())
-            } catch (t: Throwable) {
-                if (t is OutOfMemoryError) {
-                    System.gc()
-                }
-                Log.w(TAG, "Streaming page extraction notice: ${t.message}")
+        try {
+            stripper.writeText(doc, stripper.pageBuffer)
+        } catch (t: Throwable) {
+            if (t is OutOfMemoryError) {
+                System.gc()
             }
-
-            val truncated = totalPages > maxPages || stripper.isTruncated
-            return ExtractedDocument(stripper.extractedPages, metadata, NAME, truncated)
+            Log.w(TAG, "Streaming page extraction notice: ${t.message}")
         }
+
+        val truncated = totalPages > maxPages || stripper.isTruncated
+        return ExtractedDocument(stripper.extractedPages, metadata, NAME, truncated)
     }
 
     /**
-     * Custom PDFTextStripper that captures text page-by-page in a single pass through the document.
-     * Avoids O(N^2) page catalog lookups by overriding writeString and endPage.
+     * PDFTextStripper that captures text page by page in a single pass through the document.
+     *
+     * Everything the stripper writes (words, the spaces between them, line and paragraph breaks) goes to
+     * [pageBuffer], which is emptied into [extractedPages] at the end of each page. Overriding the individual
+     * write methods instead loses the word separators, which PDFTextStripper writes straight to its output:
+     * PDFs that position words rather than store space characters (LaTeX, most reports) came out as
+     * "wordswithoutspaces".
      */
     private class StreamingPageTextStripper(
-        private val maxPages: Int,
         private val maxChars: Int,
         private val maxTimeMs: Long,
         private val keepGoing: () -> Boolean
@@ -117,63 +140,70 @@ internal object PdfBoxTextExtractor {
 
         private val currentPageSb = StringBuilder()
         private val startTime = System.currentTimeMillis()
-        private var pageNumberCounter = 0
+        private var pagesRead = 0
+
+        val pageBuffer = object : Writer() {
+            override fun write(cbuf: CharArray, off: Int, len: Int) {
+                currentPageSb.append(cbuf, off, len)
+            }
+
+            override fun write(str: String) {
+                currentPageSb.append(str)
+            }
+
+            override fun write(str: String, off: Int, len: Int) {
+                currentPageSb.append(str, off, off + len)
+            }
+
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
 
         init {
             sortByPosition = true
             lineSeparator = "\n"
+            // A blank line between paragraphs gives the chunker its split points.
+            paragraphEnd = "\n"
             setAddMoreFormatting(true)
         }
 
         override fun startPage(page: PDPage?) {
             super.startPage(page)
-            pageNumberCounter++
             currentPageSb.setLength(0)
         }
 
         override fun endPage(page: PDPage?) {
             super.endPage(page)
+            pagesRead++
             val text = currentPageSb.toString().trim()
             if (text.isNotBlank()) {
-                extractedPages.add(ExtractedPage(pageNumberCounter, text))
+                // currentPageNo is the real page number: pages without a content stream never reach
+                // startPage/endPage, so counting calls here would drift after the first empty page.
+                extractedPages.add(ExtractedPage(currentPageNo, text))
                 totalChars += text.length
             }
             currentPageSb.setLength(0)
 
             val elapsed = System.currentTimeMillis() - startTime
-            if (pageNumberCounter >= maxPages || totalChars >= maxChars || elapsed > maxTimeMs || !keepGoing()) {
+            if (totalChars >= maxChars || elapsed > maxTimeMs || !keepGoing()) {
                 isTruncated = true
-                endPage = pageNumberCounter
+                endPage = currentPageNo
             }
 
             // Low-memory safeguard check every 10 pages
-            if (pageNumberCounter % 10 == 0) {
+            if (pagesRead % 10 == 0) {
                 val runtime = Runtime.getRuntime()
                 val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
                 if (availableMemory < 30L * 1024 * 1024) {
                     System.gc()
                     val afterGc = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
                     if (afterGc < 20L * 1024 * 1024) {
-                        Log.w(TAG, "Low memory safeguard triggered at page $pageNumberCounter; pausing extraction safely.")
+                        Log.w(TAG, "Low memory safeguard triggered at page $currentPageNo; pausing extraction safely.")
                         isTruncated = true
-                        endPage = pageNumberCounter
+                        endPage = currentPageNo
                     }
                 }
             }
-        }
-
-        override fun writeString(text: String?) {
-            if (text != null) {
-                currentPageSb.append(text)
-            }
-        }
-
-        override fun writeLineSeparator() {
-            currentPageSb.append("\n")
-        }
-
-        override fun writeParagraphEnd() {
-            currentPageSb.append("\n\n")
         }
     }
 }

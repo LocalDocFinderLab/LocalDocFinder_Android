@@ -168,7 +168,8 @@ fun GlossySearchOverlayScreen(
     onOpenMainActivity: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val repository = remember { DocumentRepository(context) }
+    // Application context: the repository's parser and engines must not keep this activity alive.
+    val repository = remember { DocumentRepository(context.applicationContext) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }

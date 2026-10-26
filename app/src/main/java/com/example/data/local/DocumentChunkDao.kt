@@ -103,6 +103,24 @@ interface DocumentChunkDao {
         insertChunks(chunks)
     }
 
+    /**
+     * Replaces all chunks of [fileUri] with [chunks] in one transaction, so search never sees the file half
+     * written and a failed write keeps the old chunks. Unlike [deleteFileRecord] the file's tags are kept and
+     * copied onto the new chunks.
+     */
+    @Transaction
+    suspend fun replaceFileChunks(fileUri: String, chunks: List<DocumentChunkEntity>) {
+        deleteChunksByFile(fileUri)
+        // Batches keep each statement's bound variables well under SQLite's limit.
+        for (batch in chunks.chunked(100)) {
+            insertChunks(batch)
+        }
+        val tags = getTagsForFile(fileUri)
+        if (tags.isNotEmpty()) {
+            updateChunkTagsForFile(fileUri, tags.joinToString(" "))
+        }
+    }
+
     // --- Tagging System Queries ---
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

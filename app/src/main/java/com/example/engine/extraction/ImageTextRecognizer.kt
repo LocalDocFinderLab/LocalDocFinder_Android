@@ -34,10 +34,17 @@ class ImageTextRecognizer(private val context: Context) {
         private const val TIMEOUT_SECONDS = 20L
 
         /** Scanned PDFs: only the first pages are read, to stay inside the per-file indexing time limit. */
-        const val MAX_SCANNED_PDF_PAGES = 12
-    }
+        const val MAX_SCANNED_PDF_PAGES = 50
 
-    private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+        /** Scanned PDFs: reading stops after this long and keeps the pages read so far. */
+        private const val MAX_SCANNED_PDF_MILLIS = 90_000L
+
+        /**
+         * One recognizer for the whole process. Every DocumentParser (one per worker run) used to create its
+         * own and never close it, leaking the native model each time a background scan ran.
+         */
+        private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    }
 
     /** Text found in the image at [uri], one line per recognized line; "" when there is none. */
     fun recognize(uri: Uri): String {
@@ -73,8 +80,9 @@ class ImageTextRecognizer(private val context: Context) {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd: ParcelFileDescriptor ->
                 PdfRenderer(pfd).use { renderer ->
                     val count = min(renderer.pageCount, MAX_SCANNED_PDF_PAGES)
+                    val deadline = System.currentTimeMillis() + MAX_SCANNED_PDF_MILLIS
                     for (i in 0 until count) {
-                        if (!keepGoing()) break
+                        if (!keepGoing() || System.currentTimeMillis() > deadline) break
                         renderer.openPage(i).use { page ->
                             // Render at roughly 200 dpi (PDF units are 1/72 inch), capped to MAX_SIDE.
                             val scale = min(200f / 72f, MAX_SIDE.toFloat() / max(page.width, page.height))
