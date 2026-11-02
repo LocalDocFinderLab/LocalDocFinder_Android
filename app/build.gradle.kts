@@ -13,8 +13,8 @@ android {
     minSdk = 28
     targetSdk = 36
     // versionCode follows the in-app updater's tag scheme (major*10000 + minor*100 + patch), so v1.1.0 -> 10100.
-    versionCode = 10400
-    versionName = "1.4.0"
+    versionCode = 20000
+    versionName = "2.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -130,6 +130,9 @@ dependencies {
   implementation(libs.pdfbox.android)
   // On-device OCR (bundled Latin model, no network): reads text in photos, screenshots and scanned PDFs.
   implementation(libs.mlkit.text.recognition)
+  // On-device chat with your files: MediaPipe LLM Inference runs open models (Qwen2.5, DeepSeek-R1 distill,
+  // TinyLlama, SmolLM) from .task bundles on the CPU. No network; the model file is downloaded once from Hugging Face.
+  implementation(libs.mediapipe.tasks.genai)
   implementation(libs.tensorflow.lite)
   implementation(libs.tensorflow.lite.gpu)
   implementation(libs.tensorflow.lite.gpu.api)

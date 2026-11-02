@@ -87,6 +87,9 @@ data class FileObserverProgressState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = DocumentRepository(application)
+
+    /** "Chat with your files": on-device model answering from search results (see [com.example.engine.llm]). */
+    val chat = com.example.engine.llm.DocumentChatController(application, repository, viewModelScope)
     private val workManager = WorkManager.getInstance(application)
 
     private val _query = MutableStateFlow("")
@@ -1549,5 +1552,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissUpdateBanner(versionCode: Int) {
         _dismissedUpdateCode.value = versionCode
         updatePreferences.dismissVersion(versionCode)
+    }
+
+    override fun onCleared() {
+        chat.release()
+        super.onCleared()
     }
 }

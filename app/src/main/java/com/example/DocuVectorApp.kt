@@ -55,6 +55,15 @@ class DocuVectorApp : Application(), Configuration.Provider {
         } catch (e: Throwable) {
             Log.w("DocuVectorApp", "Worker scheduling deferred: ${e.message}")
         }
+        // Chat with your files: download the default open model right after install (waits for Wi-Fi), so chat
+        // is ready without any setup. Off the main thread: it reads WorkManager's database.
+        Thread {
+            try {
+                com.example.engine.llm.LlmDownloadWorker.ensureDefaultModel(this)
+            } catch (e: Throwable) {
+                Log.w("DocuVectorApp", "Chat model download not scheduled: ${e.message}")
+            }
+        }.start()
     }
 
     private fun createNotificationChannel() {
