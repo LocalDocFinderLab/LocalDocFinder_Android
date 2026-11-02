@@ -32,23 +32,25 @@ object WhatsNew {
 
     val features: List<Item> = listOf(
         Item(
-            "See what your phone is made of",
-            "Menu → Hardware & Thermal HUD now has a \"This device\" card: your processor, CPU cores and speed, GPU and its OpenGL / Vulkan version, and your NPU / TPU (Google Tensor is recognised by generation)."
+            "Chat with your files",
+            "Ask questions in plain language (\"How much was my last electricity bill?\") and get an answer written by an AI model running on your phone, with the files and pages it came from. Open it from the chat button at the top or from the menu. Nothing is sent to the internet."
         ),
         Item(
-            "One dev build for every phone",
-            "Testers get a single universal Dev build instead of picking a processor type, and can try every feature in it side by side with the regular app."
+            "Choose your model",
+            "Qwen2.5 0.5B is downloaded automatically on Wi-Fi after install. You can also pick Qwen2.5 1.5B, DeepSeek-R1 1.5B (reasons step by step), TinyLlama 1.1B or SmolLM 135M (for older phones) — all open models."
+        ),
+        Item(
+            "Ask about one file",
+            "In a document's details, tap the chat button to ask questions about that file only, for example \"summarize this\"."
         )
     )
 
     val development: List<String> = listOf(
-        "Dev build is now released as a single universal APK (no per-ABI dev APKs); the updater falls back to it automatically.",
-        "engine/DeviceHardwareInfo reads SoC (Build.SOC_*), CPU max frequency, GL renderer/version via an offscreen EGL context, Vulkan level, TFLite GPU support and NPU/TPU; shown in HardwareDashboardSheet in all builds.",
-        "Two builds per release: prod (LocalDocFinder-<tag>-<abi>.apk) and one universal dev build (LocalDocFinder-<tag>-dev-universal.apk, application id suffix .dev, installs next to prod). BuildConfig.DEV_MODE switches the dev-only UI.",
-        "Dev build: Developer console (network ledger vs Android's own traffic count, app events + system log, app state, sample-data tools).",
-        "privacy/NetworkGuard: every HTTP client is HTTPS-only, GET/HEAD-only with no request body, and limited to huggingface.co, hf.co, github.com and githubusercontent.com. Refusals are counted.",
-        "The in-app updater only offers the APK of its own build type (prod updates to prod, dev to dev).",
-        "Removed the unused RECORD_AUDIO permission and the WebView/CDN chart."
+        "New engine/llm: ChatModel (catalog of open litert-community .task models), LlmModelStore (storage, resumable Range downloads, Hugging Face file-list fallback), LlmDownloadWorker (WorkManager, Wi-Fi by default, foreground notification with Cancel), LocalLlmEngine (MediaPipe LLM Inference, CPU, streaming, cancel) and DocumentChatController (RAG over HybridSearchEngine).",
+        "ChatPromptBuilder fits excerpts, the question and the previous turn into the model's KV-cache window (read from the ekvNNNN file name), applies the ChatML / Zephyr / DeepSeek-R1 template and splits <think> reasoning from the answer.",
+        "The default model is queued on every app start until a chat model is installed, unless the user cancelled it or deleted all models.",
+        "Model downloads still go through privacy/NetworkGuard (Hugging Face only, GET/HEAD only).",
+        "versionCode 20000 (2.0.0)."
     )
 }
 

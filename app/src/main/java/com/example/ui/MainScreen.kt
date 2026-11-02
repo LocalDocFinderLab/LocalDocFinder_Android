@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -100,6 +101,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -240,6 +242,7 @@ fun MainScreen(
     var showFileTypeDialog by remember { mutableStateOf(false) }
     var showImportedDocumentsSheet by remember { mutableStateOf(false) }
     var showDuplicatesSheet by remember { mutableStateOf(false) }
+    var showChat by rememberSaveable { mutableStateOf(false) }
     // "What's new" appears once per installed version code; the last one shown is kept in SharedPreferences.
     var showWhatsNew by remember {
         mutableStateOf(
@@ -461,6 +464,10 @@ fun MainScreen(
                 onIndexByFileTypesClick = { showFileTypeDialog = true },
                 importedDocumentCount = storedDocumentPaths.size,
                 onOpenImportedDocuments = { showImportedDocumentsSheet = true },
+                onOpenChat = {
+                    viewModel.chat.setFocusFile(null, null)
+                    showChat = true
+                },
                 onOpenDuplicates = {
                     showDuplicatesSheet = true
                     viewModel.scanForDuplicates()
@@ -645,6 +652,21 @@ fun MainScreen(
                                         )
                                     }
                                 }
+                            }
+
+                            // Chat with your files
+                            IconButton(
+                                onClick = {
+                                    viewModel.chat.setFocusFile(null, null)
+                                    showChat = true
+                                },
+                                modifier = Modifier.testTag("btn_top_chat")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Chat,
+                                    contentDescription = "Chat with your files",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
 
                             // Filter & Sort Button (opens interactive Filter Sheet)
@@ -991,7 +1013,12 @@ fun MainScreen(
             repository = viewModel.repository,
             searchQuery = query,
             onDismiss = { viewModel.onSelectResultForPreview(null) },
-            onOpenSimilar = { viewModel.onSelectResultForPreview(it) }
+            onOpenSimilar = { viewModel.onSelectResultForPreview(it) },
+            onAskAboutFile = {
+                viewModel.chat.setFocusFile(it.fileUri, it.fileName)
+                viewModel.onSelectResultForPreview(null)
+                showChat = true
+            }
         )
     }
 
@@ -1428,6 +1455,15 @@ fun MainScreen(
             onPickFolder = { directoryPickerLauncher.launch(null) },
             onRetryUnfinished = { viewModel.reindexStoredDocumentPaths() },
             onRemove = { viewModel.removeStoredDocumentPath(it.uri) }
+        )
+    }
+
+    // Chat with your files (on-device model, answers grounded in search results)
+    if (showChat) {
+        com.example.ui.components.DocumentChatScreen(
+            controller = viewModel.chat,
+            onOpenSource = { openDocumentExternally(context, it.fileUri) },
+            onDismiss = { showChat = false }
         )
     }
 

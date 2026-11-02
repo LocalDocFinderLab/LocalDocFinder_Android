@@ -123,6 +123,30 @@ Each result says why it matched — *File name*, *Exact phrase*, *All words*, *S
 Optional search operators: `"exact phrase"`, `-word` (exclude), `name:word` (must be in the file name),
 `ext:pdf` / `type:image` (file type; `ext:pdf` on its own lists all PDFs, newest first).
 
+## Chat with your files (on-device LLM)
+
+Menu → **Chat with your files** (or the chat button in the top bar) answers questions about the indexed files with an
+open-weight language model that runs on the phone (MediaPipe LLM Inference, CPU). It is retrieval-augmented: the
+question is turned into a search query, `HybridSearchEngine` finds the best excerpt of the top files, and
+`ChatPromptBuilder` fits those excerpts, the question and the previous turn into the model's context window before the
+answer is streamed back with numbered sources. From a document's detail sheet, the chat button asks about that file only.
+
+| Model | Size | Licence | Notes |
+|---|---|---|---|
+| **Qwen2.5 0.5B Instruct** (default) | ≈550 MB | Apache-2.0 | downloaded automatically after install (Wi-Fi) |
+| Qwen2.5 1.5B Instruct | ≈1.6 GB | Apache-2.0 | better answers, 6 GB+ RAM |
+| DeepSeek-R1 Distill Qwen 1.5B | ≈1.8 GB | MIT | reasoning model, its `<think>` part is shown folded |
+| TinyLlama 1.1B Chat | ≈1.1 GB | Apache-2.0 | |
+| SmolLM 135M Instruct | ≈160 MB | Apache-2.0 | for older phones |
+
+Files are the `.task` bundles published by `litert-community` on Hugging Face (no login needed). `LlmDownloadWorker`
+(WorkManager) downloads them to `files/llm_models/<id>/`, resumes with HTTP Range requests and waits for Wi-Fi unless
+mobile data is allowed; if a file was renamed upstream, `LlmModelStore` picks the closest `.task` from the repository's
+file list. A model can also be pushed with
+`adb push model.task /sdcard/Android/data/com.aistudio.vectorsearch.dvmxqe/files/llm_models/qwen2_5_0_5b_instruct/`.
+The default model is queued at every app start until a chat model is installed, unless the user cancelled that
+download or deleted all models.
+
 ## Tests
 
 `./gradlew testProdDebugUnitTest` runs the JVM/Robolectric tests, including the search ranking rules
@@ -185,6 +209,6 @@ Each release has two kinds of APK built from the same code (Gradle product flavo
 
 Your files, searches and index are never sent anywhere. All HTTP goes through `privacy/NetworkGuard`, which only allows
 HTTPS `GET`/`HEAD` requests without a body to `huggingface.co`, `hf.co`, `github.com` and `githubusercontent.com`
-(model downloads and app updates), refuses everything else and counts it in `privacy/NetworkAudit`. The **Privacy report**
+(embedding/chat model downloads and app updates), refuses everything else and counts it in `privacy/NetworkAudit`. The **Privacy report**
 in the menu shows the totals; the dev build's Developer console lists each request and compares the gate's count with
 Android's own per-app traffic counter, which would expose a library talking to the network on its own.

@@ -54,3 +54,12 @@
 
 # Kotlin metadata (needed by anything reading Kotlin classes reflectively).
 -keep class kotlin.Metadata { *; }
+
+# MediaPipe LLM Inference (chat with your files): JNI calls back into Java classes by name, and the task
+# options are protobuf-lite messages read reflectively.
+-keep class com.google.mediapipe.** { *; }
+-dontwarn com.google.mediapipe.**
+-keep class com.google.protobuf.** { *; }
+-dontwarn com.google.protobuf.**
+-dontwarn com.google.auto.value.**
+-dontwarn javax.annotation.**

@@ -310,6 +310,10 @@ class DocumentRepository(
         return hybridSearchEngine.search(query, mode, topK, filterTag, fileTypeFilter, sortOrder, semanticScoring, semanticWeight)
     }
 
+    /** Every chunk of one indexed file, in document order (used by "ask about this file" in the chat). */
+    suspend fun chunksForFile(fileUri: String): List<com.example.data.local.DocumentChunkEntity> =
+        withContext(Dispatchers.IO) { dao.getChunksForFile(fileUri) }
+
     /** Documents most similar to [source], using its stored vector (see [HybridSearchEngine.findSimilar]). */
     suspend fun findSimilarDocuments(source: SearchResult, limit: Int = 8): List<SearchResult> =
         hybridSearchEngine.findSimilar(source.chunkId, limit)

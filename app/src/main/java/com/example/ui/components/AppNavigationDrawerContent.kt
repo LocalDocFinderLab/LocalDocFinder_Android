@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -111,6 +112,7 @@ fun AppNavigationDrawerContent(
     importedDocumentCount: Int = 0,
     onOpenImportedDocuments: () -> Unit = {},
     onOpenDuplicates: () -> Unit = {},
+    onOpenChat: () -> Unit = {},
     onOpenWhatsNew: () -> Unit = {},
     onOpenPrivacyReport: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
@@ -685,6 +687,17 @@ fun AppNavigationDrawerContent(
                     testTag = "drawer_imported_documents"
                 )
             }
+
+            DrawerMenuItem(
+                icon = Icons.AutoMirrored.Filled.Chat,
+                title = "Chat with your files",
+                subtitle = "Ask questions, answered offline by an on-device AI model",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenChat()
+                },
+                testTag = "drawer_chat"
+            )
 
             DrawerMenuItem(
                 icon = Icons.Default.ContentCopy,

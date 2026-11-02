@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Launch
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Close
@@ -85,7 +86,9 @@ fun DocumentDetailSheet(
     searchQuery: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    onOpenSimilar: (SearchResult) -> Unit = {}
+    onOpenSimilar: (SearchResult) -> Unit = {},
+    /** Opens the chat limited to this file; null hides the button. */
+    onAskAboutFile: ((SearchResult) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -208,6 +211,18 @@ fun DocumentDetailSheet(
                         contentDescription = if (isExpanded) "Collapse" else "Expand to full screen",
                         tint = MaterialTheme.colorScheme.primary
                     )
+                }
+                if (onAskAboutFile != null) {
+                    IconButton(
+                        onClick = { onAskAboutFile(result) },
+                        modifier = Modifier.testTag("detail_ask_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Chat,
+                            contentDescription = "Ask about this file",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 IconButton(
                     onClick = {
