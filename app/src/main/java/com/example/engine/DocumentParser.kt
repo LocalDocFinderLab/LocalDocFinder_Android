@@ -10,6 +10,7 @@ import android.util.Log
 import android.util.Xml
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedReader
@@ -17,7 +18,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
 import java.io.InputStreamReader
-import java.io.StringReader
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.zip.InflaterInputStream
@@ -58,6 +58,9 @@ class DocumentParser(
 
         /** .doc/.xls/.ppt files are read whole; bigger ones are skipped to protect memory. */
         private const val MAX_LEGACY_OFFICE_BYTES = 80 * 1024 * 1024
+
+        /** Plain text, HTML, CSV and logs are read up to this many characters (~1,000 pages). */
+        private const val MAX_PLAIN_TEXT_CHARS = 4_000_000
 
         // Directories to ignore during system or root tree scanning (internal OS and temporary caches)
         val IGNORED_DIRECTORY_NAMES = setOf(
@@ -503,8 +506,14 @@ class DocumentParser(
 
     /**
      * Extracts text and chunks from a DocumentFile with robust error categorization.
+     *
+     * @param deadlineMillis wall-clock time after which PDF extraction and text recognition stop and keep the
+     *   pages read so far, so a huge file is indexed partly instead of being abandoned by the caller's timeout.
      */
-    suspend fun parseDocumentSafely(docFile: DocumentFile): ParseResult = withContext(Dispatchers.IO) {
+    suspend fun parseDocumentSafely(
+        docFile: DocumentFile,
+        deadlineMillis: Long = Long.MAX_VALUE
+    ): ParseResult = withContext(Dispatchers.IO) {
         val uri = docFile.uri
         val name = docFile.name ?: "Unknown"
         val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
@@ -539,6 +548,9 @@ class DocumentParser(
         val fullText: String
         var pdfPages: List<com.example.engine.extraction.ExtractedPage>? = null
         var ocrAttempted = false
+        // Extraction blocks, so a timeout around this call can only stop it through this check between pages.
+        val job = coroutineContext[Job]
+        val keepGoing = { job?.isActive != false && System.currentTimeMillis() < deadlineMillis }
         try {
             fullText = when {
                 ext in ImageMetadataExtractor.IMAGE_EXTENSIONS -> {
@@ -549,11 +561,11 @@ class DocumentParser(
                     )
                 }
                 ext == "pdf" -> {
-                    val extracted = textExtraction.extractPdf(uri)
+                    val extracted = textExtraction.extractPdf(uri, keepGoing)
                     if (extracted.isEmpty) {
                         // No text layer (a scan or photographed pages): read the rendered pages with OCR.
                         ocrAttempted = true
-                        val scanned = imageTextRecognizer.recognizePdfPages(uri)
+                        val scanned = imageTextRecognizer.recognizePdfPages(uri, keepGoing)
                         if (scanned.isNotEmpty()) {
                             pdfPages = scanned
                             scanned.joinToString("\n\n") { it.text }
@@ -621,12 +633,17 @@ class DocumentParser(
                 val sb = StringBuilder()
                 var read: Int
                 var totalChars = 0
-                val maxChars = 2_000_000 // Support large documents up to ~2M chars (~500 pages)
+                var nextMemoryCheck = 200_000
+                val maxChars = MAX_PLAIN_TEXT_CHARS
                 while (reader.read(buffer).also { read = it } != -1) {
                     sb.append(buffer, 0, read)
                     totalChars += read
-                    if (totalChars >= maxChars) break
-                    if (totalChars % 200_000 == 0) {
+                    if (totalChars >= maxChars) {
+                        Log.w(TAG, "Stopped reading $uri after $maxChars characters")
+                        break
+                    }
+                    if (totalChars >= nextMemoryCheck) {
+                        nextMemoryCheck += 200_000
                         val runtime = Runtime.getRuntime()
                         val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
                         if (availableMemory < 25L * 1024 * 1024) {
@@ -651,8 +668,7 @@ class DocumentParser(
                 var entry = zip.nextEntry
                 while (entry != null) {
                     if (entry.name == "word/document.xml") {
-                        val xmlContent = zip.readBytes().toString(Charsets.UTF_8)
-                        parseWordXml(xmlContent, sb)
+                        parseWordXml(zip, sb)
                         break
                     }
                     zip.closeEntry()
@@ -663,9 +679,9 @@ class DocumentParser(
         return sb.toString().trim()
     }
 
-    private fun parseWordXml(xmlContent: String, output: StringBuilder) {
+    private fun parseWordXml(xml: InputStream, output: StringBuilder) {
         val parser = Xml.newPullParser()
-        parser.setInput(StringReader(xmlContent))
+        parser.setInput(xml, "UTF-8")
 
         var eventType = parser.eventType
         var inTextTag = false
@@ -759,8 +775,9 @@ class DocumentParser(
                 val slideContents = mutableListOf<Pair<String, String>>()
                 while (entry != null) {
                     if (entry.name.startsWith("ppt/slides/slide") && entry.name.endsWith(".xml")) {
-                        val slideXml = zip.readBytes().toString(Charsets.UTF_8)
-                        slideContents.add(Pair(entry.name, slideXml))
+                        val slideText = StringBuilder()
+                        parsePowerPointXml(zip, slideText)
+                        slideContents.add(Pair(entry.name, slideText.toString()))
                     }
                     zip.closeEntry()
                     entry = zip.nextEntry
@@ -768,10 +785,10 @@ class DocumentParser(
 
                 // Sort slides by number (slide2.xml before slide10.xml)
                 slideContents.sortBy { slideNumber(it.first) ?: Int.MAX_VALUE }
-                for ((name, xml) in slideContents) {
-                    val slideNum = slideNumber(name) ?: (slideContents.indexOfFirst { it.first == name } + 1)
+                for ((index, slide) in slideContents.withIndex()) {
+                    val slideNum = slideNumber(slide.first) ?: (index + 1)
                     sb.append("--- Slide $slideNum ---\n")
-                    parsePowerPointXml(xml, sb)
+                    sb.append(slide.second)
                     sb.append("\n\n")
                 }
             }
@@ -779,9 +796,9 @@ class DocumentParser(
         return sb.toString().trim()
     }
 
-    private fun parsePowerPointXml(xmlContent: String, output: StringBuilder) {
+    private fun parsePowerPointXml(xml: InputStream, output: StringBuilder) {
         val parser = Xml.newPullParser()
-        parser.setInput(StringReader(xmlContent))
+        parser.setInput(xml, "UTF-8")
 
         var eventType = parser.eventType
         var inTextTag = false
@@ -913,7 +930,7 @@ class DocumentParser(
                             }
                             if (sentence.length > targetChunkCharacters) {
                                 val words = sentence.split(" ")
-                                for (word in words) {
+                                for (word in words.flatMap { splitOversizedWord(it) }) {
                                     if (currentChunk.length + word.length + 1 <= targetChunkCharacters) {
                                         if (currentChunk.isNotEmpty()) currentChunk.append(" ")
                                         currentChunk.append(word)
@@ -953,6 +970,10 @@ class DocumentParser(
             ParsedChunk(index = index, text = chunkText, hash = hash)
         }
     }
+
+    /** Cuts a run of text with no spaces into pieces that fit in a chunk. */
+    private fun splitOversizedWord(word: String): List<String> =
+        if (word.length <= targetChunkCharacters) listOf(word) else word.chunked((targetChunkCharacters - overlapCharacters - 1).coerceAtLeast(1))
 
     private fun extractOverlap(text: String, overlapLen: Int): String {
         if (text.length <= overlapLen) return text

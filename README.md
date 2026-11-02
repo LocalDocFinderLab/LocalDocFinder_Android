@@ -4,6 +4,9 @@ Offline document search for Android: semantic (vector) + keyword (SQLite FTS) hy
 documents, chats and contacts. **Everything runs on the device** — no cloud AI, no API keys, no accounts, and
 no document text or search query is ever sent anywhere.
 
+**Using the app?** Read the [User Guide](docs/USER_GUIDE.md): installation, adding documents, search operators,
+chat with your files, privacy, troubleshooting and FAQ.
+
 ## Run locally
 
 **Prerequisites:** [Android Studio](https://developer.android.com/studio)
@@ -30,7 +33,7 @@ PDF / DOCX / TXT / …            TextExtractionService          DocumentParser 
    breaks are kept, and the PDF's title/author metadata is read.
 2. If PDFBox rejects the file, the built-in stream scanner / `PdfRenderer` extractor is used instead.
 3. A PDF with no text layer (a scan or photographed pages) is rendered page by page and read with on-device
-   text recognition (first 12 pages). If no text is found it is still indexed by file name.
+   text recognition (up to 50 pages within a 90-second budget). If no text is found it is still indexed by file name.
 
 **Office files** (`engine/office/`, plain Kotlin, no Apache POI):
 
