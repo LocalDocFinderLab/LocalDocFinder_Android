@@ -20,6 +20,11 @@ object PdfParserUtils {
 
     private const val TAG = "PdfParserUtils"
 
+    // Compiled once: cleanPdfTextForEmbedding runs on every page, and used to compile a Regex for every line.
+    private val HYPHENATED_LINE_BREAK = Regex("([A-Za-z0-9]+)-\\s*\\n\\s*([A-Za-z0-9]+)")
+    private val CONTROL_CHARS = Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]")
+    private val SPACE_RUN = Regex("[ \\t]+")
+
     /**
      * Extracts all raw text content from a local PDF file.
      *
@@ -164,15 +169,15 @@ object PdfParserUtils {
             .replace("\r", "\n")
 
         // Merge hyphenated words at line breaks (e.g. "embed-\ning" -> "embedding")
-        val unhyphenated = Regex("([A-Za-z0-9]+)-\\s*\\n\\s*([A-Za-z0-9]+)").replace(normalized) { match ->
+        val unhyphenated = HYPHENATED_LINE_BREAK.replace(normalized) { match ->
             match.groupValues[1] + match.groupValues[2]
         }
 
         // Remove non-printable control characters except newline and tab
-        val cleanChars = unhyphenated.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), " ")
+        val cleanChars = unhyphenated.replace(CONTROL_CHARS, " ")
 
         // Collapse multiple spaces/tabs within lines
-        val lines = cleanChars.lines().map { it.replace(Regex("[ \\t]+"), " ").trim() }
+        val lines = cleanChars.lines().map { it.replace(SPACE_RUN, " ").trim() }
 
         // Format paragraphs cleanly
         val result = StringBuilder()

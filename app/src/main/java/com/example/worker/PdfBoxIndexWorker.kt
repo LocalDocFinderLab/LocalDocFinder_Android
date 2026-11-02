@@ -312,7 +312,13 @@ class PdfBoxIndexWorker(
         return result
     }
 
+    @Volatile private var lastPostedAtMillis = 0L
+
+    /** Throttled to twice per second: progress fires per embedding batch, and each update is a notification + DB write. */
     private fun postProgress(percent: Int, currentFile: String, phase: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastPostedAtMillis < 500L) return
+        lastPostedAtMillis = now
         try {
             setProgressAsync(
                 workDataOf(
