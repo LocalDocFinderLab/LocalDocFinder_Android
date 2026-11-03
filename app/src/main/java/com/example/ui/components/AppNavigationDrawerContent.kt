@@ -113,6 +113,12 @@ fun AppNavigationDrawerContent(
     onOpenImportedDocuments: () -> Unit = {},
     onOpenDuplicates: () -> Unit = {},
     onOpenChat: () -> Unit = {},
+    appMode: com.example.ui.AppMode = com.example.ui.AppMode.SEARCH,
+    chatModelName: String = "",
+    chatAllowMobileData: Boolean = false,
+    onToggleChatMobileData: (Boolean) -> Unit = {},
+    onOpenChatModels: () -> Unit = {},
+    onClearChat: () -> Unit = {},
     onOpenWhatsNew: () -> Unit = {},
     onOpenPrivacyReport: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
@@ -297,229 +303,270 @@ fun AppNavigationDrawerContent(
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
 
-            // 3. Search Results Sorting Section (Dropdown Menu)
-            DrawerSectionHeader(title = "Sort Search Results")
+            if (appMode == com.example.ui.AppMode.CHAT) {
+                // Chat settings: only shown in Chat mode
+                DrawerSectionHeader(title = "Chat Settings")
 
-            var sortDropdownExpanded by remember { mutableStateOf(false) }
+                DrawerMenuItem(
+                    icon = Icons.Default.Memory,
+                    title = "Chat model",
+                    subtitle = chatModelName.ifBlank { "Choose and download a model" },
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenChatModels()
+                    },
+                    testTag = "drawer_chat_model"
+                )
 
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-            ) {
-                Column(
+                DrawerMenuItem(
+                    icon = Icons.Default.Download,
+                    title = "Download on mobile data",
+                    subtitle = if (chatAllowMobileData) "Models may download over mobile data" else "Models wait for Wi-Fi",
+                    onClick = { onToggleChatMobileData(!chatAllowMobileData) },
+                    trailing = {
+                        Switch(checked = chatAllowMobileData, onCheckedChange = { onToggleChatMobileData(it) })
+                    },
+                    testTag = "drawer_chat_mobile_data"
+                )
+
+                DrawerMenuItem(
+                    icon = Icons.Default.DeleteSweep,
+                    title = "Clear conversation",
+                    subtitle = "Start a fresh chat",
+                    onClick = {
+                        onCloseDrawer()
+                        onClearChat()
+                    },
+                    testTag = "drawer_chat_clear"
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            } else {
+                // 3. Search Results Sorting Section (Dropdown Menu)
+                DrawerSectionHeader(title = "Sort Search Results")
+
+                var sortDropdownExpanded by remember { mutableStateOf(false) }
+
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                 ) {
-                    Text(
-                        text = "Sort Results By",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("drawer_sort_dropdown_container")
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
                     ) {
-                        Surface(
+                        Text(
+                            text = "Sort Results By",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { sortDropdownExpanded = !sortDropdownExpanded }
-                                .testTag("drawer_sort_dropdown_trigger"),
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
-                            )
+                                .testTag("drawer_sort_dropdown_container")
                         ) {
-                            Row(
+                            Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { sortDropdownExpanded = !sortDropdownExpanded }
+                                    .testTag("drawer_sort_dropdown_trigger"),
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = RoundedCornerShape(10.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
+                                )
                             ) {
                                 Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    val (icon, label) = when (currentSortOrder) {
-                                        SearchSortOrder.RELEVANCE -> Pair(Icons.Default.AutoAwesome, "Relevance")
-                                        SearchSortOrder.DATE_DESC -> Pair(Icons.Default.CalendarToday, "Date Modified")
-                                        SearchSortOrder.FILE_SIZE -> Pair(Icons.Default.Storage, "File Size")
-                                        SearchSortOrder.DATE_ASC -> Pair(Icons.Default.CalendarToday, "Date Modified (Oldest)")
-                                        SearchSortOrder.NAME_ASC -> Pair(Icons.AutoMirrored.Filled.Sort, "File Name (A to Z)")
-                                        SearchSortOrder.NAME_DESC -> Pair(Icons.AutoMirrored.Filled.Sort, "File Name (Z to A)")
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        val (icon, label) = when (currentSortOrder) {
+                                            SearchSortOrder.RELEVANCE -> Pair(Icons.Default.AutoAwesome, "Relevance")
+                                            SearchSortOrder.DATE_DESC -> Pair(Icons.Default.CalendarToday, "Date Modified")
+                                            SearchSortOrder.FILE_SIZE -> Pair(Icons.Default.Storage, "File Size")
+                                            SearchSortOrder.DATE_ASC -> Pair(Icons.Default.CalendarToday, "Date Modified (Oldest)")
+                                            SearchSortOrder.NAME_ASC -> Pair(Icons.AutoMirrored.Filled.Sort, "File Name (A to Z)")
+                                            SearchSortOrder.NAME_DESC -> Pair(Icons.AutoMirrored.Filled.Sort, "File Name (Z to A)")
+                                        }
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
                                     Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        imageVector = if (sortDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                        contentDescription = "Toggle sort dropdown",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Icon(
-                                    imageVector = if (sortDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                    contentDescription = "Toggle sort dropdown",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+
+                            DropdownMenu(
+                                expanded = sortDropdownExpanded,
+                                onDismissRequest = { sortDropdownExpanded = false },
+                                modifier = Modifier
+                                    .width(280.dp)
+                                    .testTag("drawer_sort_dropdown_menu")
+                            ) {
+                                // 1. Relevance
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "Relevance",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (currentSortOrder == SearchSortOrder.RELEVANCE) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (currentSortOrder == SearchSortOrder.RELEVANCE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = if (developerMode) "RRF & semantic similarity ranking" else "Best match first",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = if (currentSortOrder == SearchSortOrder.RELEVANCE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    trailingIcon = if (currentSortOrder == SearchSortOrder.RELEVANCE) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    } else null,
+                                    onClick = {
+                                        onSelectSortOrder(SearchSortOrder.RELEVANCE)
+                                        sortDropdownExpanded = false
+                                    },
+                                    modifier = Modifier.testTag("drawer_sort_item_relevance")
+                                )
+
+                                // 2. Date Modified
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "Date Modified",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (currentSortOrder == SearchSortOrder.DATE_DESC) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (currentSortOrder == SearchSortOrder.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "Most recently updated files first",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarToday,
+                                            contentDescription = null,
+                                            tint = if (currentSortOrder == SearchSortOrder.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    trailingIcon = if (currentSortOrder == SearchSortOrder.DATE_DESC) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    } else null,
+                                    onClick = {
+                                        onSelectSortOrder(SearchSortOrder.DATE_DESC)
+                                        sortDropdownExpanded = false
+                                    },
+                                    modifier = Modifier.testTag("drawer_sort_item_date_modified")
+                                )
+
+                                // 3. File Size
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "File Size",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (currentSortOrder == SearchSortOrder.FILE_SIZE) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (currentSortOrder == SearchSortOrder.FILE_SIZE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "Largest documents & chunks first",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Storage,
+                                            contentDescription = null,
+                                            tint = if (currentSortOrder == SearchSortOrder.FILE_SIZE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    trailingIcon = if (currentSortOrder == SearchSortOrder.FILE_SIZE) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    } else null,
+                                    onClick = {
+                                        onSelectSortOrder(SearchSortOrder.FILE_SIZE)
+                                        sortDropdownExpanded = false
+                                    },
+                                    modifier = Modifier.testTag("drawer_sort_item_file_size")
                                 )
                             }
                         }
-
-                        DropdownMenu(
-                            expanded = sortDropdownExpanded,
-                            onDismissRequest = { sortDropdownExpanded = false },
-                            modifier = Modifier
-                                .width(280.dp)
-                                .testTag("drawer_sort_dropdown_menu")
-                        ) {
-                            // 1. Relevance
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(
-                                            text = "Relevance",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = if (currentSortOrder == SearchSortOrder.RELEVANCE) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (currentSortOrder == SearchSortOrder.RELEVANCE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = if (developerMode) "RRF & semantic similarity ranking" else "Best match first",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = if (currentSortOrder == SearchSortOrder.RELEVANCE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                trailingIcon = if (currentSortOrder == SearchSortOrder.RELEVANCE) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else null,
-                                onClick = {
-                                    onSelectSortOrder(SearchSortOrder.RELEVANCE)
-                                    sortDropdownExpanded = false
-                                },
-                                modifier = Modifier.testTag("drawer_sort_item_relevance")
-                            )
-
-                            // 2. Date Modified
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(
-                                            text = "Date Modified",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = if (currentSortOrder == SearchSortOrder.DATE_DESC) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (currentSortOrder == SearchSortOrder.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = "Most recently updated files first",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.CalendarToday,
-                                        contentDescription = null,
-                                        tint = if (currentSortOrder == SearchSortOrder.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                trailingIcon = if (currentSortOrder == SearchSortOrder.DATE_DESC) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else null,
-                                onClick = {
-                                    onSelectSortOrder(SearchSortOrder.DATE_DESC)
-                                    sortDropdownExpanded = false
-                                },
-                                modifier = Modifier.testTag("drawer_sort_item_date_modified")
-                            )
-
-                            // 3. File Size
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(
-                                            text = "File Size",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = if (currentSortOrder == SearchSortOrder.FILE_SIZE) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (currentSortOrder == SearchSortOrder.FILE_SIZE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = "Largest documents & chunks first",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Storage,
-                                        contentDescription = null,
-                                        tint = if (currentSortOrder == SearchSortOrder.FILE_SIZE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                trailingIcon = if (currentSortOrder == SearchSortOrder.FILE_SIZE) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else null,
-                                onClick = {
-                                    onSelectSortOrder(SearchSortOrder.FILE_SIZE)
-                                    sortDropdownExpanded = false
-                                },
-                                modifier = Modifier.testTag("drawer_sort_item_file_size")
-                            )
-                        }
                     }
                 }
-            }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+
+            }
 
             // 3. Folder & Document Indexing Section
             if (developerMode) {

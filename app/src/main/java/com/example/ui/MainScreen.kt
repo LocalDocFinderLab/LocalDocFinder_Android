@@ -93,6 +93,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -242,7 +244,8 @@ fun MainScreen(
     var showFileTypeDialog by remember { mutableStateOf(false) }
     var showImportedDocumentsSheet by remember { mutableStateOf(false) }
     var showDuplicatesSheet by remember { mutableStateOf(false) }
-    var showChat by rememberSaveable { mutableStateOf(false) }
+    var appMode by rememberSaveable { mutableStateOf(AppMode.SEARCH) }
+    var showChatModels by rememberSaveable { mutableStateOf(false) }
     // "What's new" appears once per installed version code; the last one shown is kept in SharedPreferences.
     var showWhatsNew by remember {
         mutableStateOf(
@@ -414,6 +417,9 @@ fun MainScreen(
         }
     }
 
+    val chatModel by viewModel.chat.selectedModel.collectAsStateWithLifecycle()
+    val chatAllowMobileData by viewModel.chat.allowMobileData.collectAsStateWithLifecycle()
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -466,8 +472,14 @@ fun MainScreen(
                 onOpenImportedDocuments = { showImportedDocumentsSheet = true },
                 onOpenChat = {
                     viewModel.chat.setFocusFile(null, null)
-                    showChat = true
+                    appMode = AppMode.CHAT
                 },
+                appMode = appMode,
+                chatModelName = chatModel.shortName,
+                chatAllowMobileData = chatAllowMobileData,
+                onToggleChatMobileData = { viewModel.chat.setAllowMobileData(it) },
+                onOpenChatModels = { showChatModels = true },
+                onClearChat = { viewModel.chat.clear() },
                 onOpenDuplicates = {
                     showDuplicatesSheet = true
                     viewModel.scanForDuplicates()
@@ -654,21 +666,6 @@ fun MainScreen(
                                 }
                             }
 
-                            // Chat with your files
-                            IconButton(
-                                onClick = {
-                                    viewModel.chat.setFocusFile(null, null)
-                                    showChat = true
-                                },
-                                modifier = Modifier.testTag("btn_top_chat")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Chat,
-                                    contentDescription = "Chat with your files",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
                             // Filter & Sort Button (opens interactive Filter Sheet)
                             IconButton(
                                 onClick = { showFilterBottomSheet = true },
@@ -743,6 +740,39 @@ fun MainScreen(
                         )
                     }
 
+                    // Mode tabs: Search / Chat. The drawer options follow the selected mode.
+                    TabRow(selectedTabIndex = appMode.ordinal, modifier = Modifier.testTag("mode_tabs")) {
+                        AppMode.entries.forEach { mode ->
+                            Tab(
+                                selected = appMode == mode,
+                                onClick = { appMode = mode },
+                                text = { Text(mode.label, fontWeight = FontWeight.SemiBold) },
+                                icon = {
+                                    Icon(
+                                        if (mode == AppMode.SEARCH) Icons.Default.Search else Icons.AutoMirrored.Filled.Chat,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                modifier = Modifier.testTag("tab_${mode.name.lowercase()}")
+                            )
+                        }
+                    }
+
+                    if (appMode == AppMode.CHAT) {
+                        com.example.ui.components.DocumentChatScreen(
+                            controller = viewModel.chat,
+                            indexedFileCount = totalFiles,
+                            indexingActive = indexingState is IndexingState.Progress,
+                            onSetUpIndexing = {
+                                appMode = AppMode.SEARCH
+                                scope.launch { drawerState.open() }
+                            },
+                            onOpenSource = { openDocumentExternally(context, it.fileUri) },
+                            showModels = showChatModels,
+                            onShowModelsChange = { showChatModels = it }
+                        )
+                    } else
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1017,7 +1047,7 @@ fun MainScreen(
             onAskAboutFile = {
                 viewModel.chat.setFocusFile(it.fileUri, it.fileName)
                 viewModel.onSelectResultForPreview(null)
-                showChat = true
+                appMode = AppMode.CHAT
             }
         )
     }
@@ -1455,15 +1485,6 @@ fun MainScreen(
             onPickFolder = { directoryPickerLauncher.launch(null) },
             onRetryUnfinished = { viewModel.reindexStoredDocumentPaths() },
             onRemove = { viewModel.removeStoredDocumentPath(it.uri) }
-        )
-    }
-
-    // Chat with your files (on-device model, answers grounded in search results)
-    if (showChat) {
-        com.example.ui.components.DocumentChatScreen(
-            controller = viewModel.chat,
-            onOpenSource = { openDocumentExternally(context, it.fileUri) },
-            onDismiss = { showChat = false }
         )
     }
 

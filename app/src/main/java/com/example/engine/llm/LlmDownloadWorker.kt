@@ -100,7 +100,11 @@ class LlmDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
                 when (info.state) {
                     WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
                         val done = info.progress.getLong(KEY_DONE, 0L)
-                        DownloadState.Waiting(info.runAttemptCount > 0, done)
+                        DownloadState.Waiting(
+                            info.runAttemptCount > 0,
+                            done,
+                            LlmModelStore(context).lastError(model)
+                        )
                     }
                     WorkInfo.State.RUNNING -> DownloadState.Running(
                         info.progress.getLong(KEY_DONE, 0L),
@@ -116,7 +120,7 @@ class LlmDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
     sealed interface DownloadState {
         data object Idle : DownloadState
         /** Queued: waiting for Wi-Fi / storage, or for the next retry after a lost connection. */
-        data class Waiting(val retrying: Boolean, val doneBytes: Long) : DownloadState
+        data class Waiting(val retrying: Boolean, val doneBytes: Long, val lastError: String? = null) : DownloadState
         data class Running(val doneBytes: Long, val totalBytes: Long) : DownloadState {
             val fraction: Float get() = if (totalBytes > 0) (doneBytes.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
         }
@@ -152,6 +156,7 @@ class LlmDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
                     }
                 }
             } }
+            store.setLastError(model, null)
             if (store.installedModels().size == 1) store.selectedModel = model
             com.example.dev.DevLog.i("Chat", "Downloaded chat model ${model.id}")
             Result.success()
@@ -159,10 +164,12 @@ class LlmDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
             throw e
         } catch (e: LlmModelStore.DownloadException) {
             Log.w(TAG, "Download of ${model.id} failed (attempt $runAttemptCount): ${e.message}")
+            store.setLastError(model, e.message)
             if (e.retryable && runAttemptCount < MAX_ATTEMPTS) Result.retry()
             else Result.failure(workDataOf(KEY_ERROR to e.message))
         } catch (e: Exception) {
             Log.w(TAG, "Download of ${model.id} failed: ${e.message}")
+            store.setLastError(model, e.message ?: "Download failed")
             if (runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
         }
     }

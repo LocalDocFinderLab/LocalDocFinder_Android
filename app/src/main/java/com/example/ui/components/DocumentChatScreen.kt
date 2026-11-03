@@ -73,8 +73,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.engine.llm.ChatEngineStatus
 import com.example.engine.llm.ChatMessage
 import com.example.engine.llm.ChatModel
@@ -83,14 +81,19 @@ import com.example.engine.llm.DocumentChatController
 import com.example.engine.llm.LlmDownloadWorker.DownloadState
 
 /**
- * Full-screen "Chat with your files": ask questions, get answers from an on-device model with the excerpts
- * they came from. Models are picked, downloaded and deleted from the model sheet (chip in the top bar).
+ * "Chat with your files" tab: ask questions, get answers from an on-device model with the excerpts they came
+ * from. Chat answers from the search index, so until at least one file is indexed this tab only shows a
+ * "set up indexing first" card. Models are picked, downloaded and deleted from the model sheet.
  */
 @Composable
 fun DocumentChatScreen(
     controller: DocumentChatController,
+    indexedFileCount: Int,
+    indexingActive: Boolean,
+    onSetUpIndexing: () -> Unit,
     onOpenSource: (ChatSource) -> Unit,
-    onDismiss: () -> Unit
+    showModels: Boolean,
+    onShowModelsChange: (Boolean) -> Unit
 ) {
     val messages by controller.messages.collectAsState()
     val model by controller.selectedModel.collectAsState()
@@ -98,128 +101,149 @@ fun DocumentChatScreen(
     val downloads by controller.downloads.collectAsState()
     val status by controller.status.collectAsState()
     val focus by controller.focusFile.collectAsState()
-    var showModels by rememberSaveable { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val modelReady = model in installed
     val busy = messages.lastOrNull()?.streaming == true
+    val hasIndex = indexedFileCount > 0
 
     LaunchedEffect(Unit) { controller.refreshInstalled() }
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(modifier = Modifier.fillMaxSize().testTag("document_chat"), color = MaterialTheme.colorScheme.background) {
-            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-                // Top bar
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+    Column(modifier = Modifier.fillMaxSize().imePadding().testTag("document_chat")) {
+        // Chat header: status + model chip + clear
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (hasIndex) statusLine(status, model, modelReady) else "Indexing needed before chatting",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            AssistChip(
+                onClick = { onShowModelsChange(true) },
+                label = { Text(model.shortName, maxLines = 1) },
+                leadingIcon = { Icon(Icons.Default.Memory, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                modifier = Modifier.testTag("chat_model_chip")
+            )
+            IconButton(onClick = { controller.clear() }, enabled = messages.isNotEmpty()) {
+                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear chat")
+            }
+        }
+        HorizontalDivider()
+
+        if (!hasIndex) {
+            IndexingRequiredCard(indexingActive = indexingActive, onSetUpIndexing = onSetUpIndexing)
+            return@Column
+        }
+
+        focus?.let { (_, name) ->
+            InputChip(
+                selected = true,
+                onClick = { controller.setFocusFile(null, null) },
+                label = { Text("Only this file: $name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Ask about all files", modifier = Modifier.size(16.dp)) },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+
+        if (!modelReady) {
+            ModelDownloadCard(
+                model = model,
+                state = downloads[model] ?: DownloadState.Idle,
+                onDownload = { controller.download(model) },
+                onCancel = { controller.cancelDownload(model) },
+                onUseMobileData = { controller.setAllowMobileData(true) },
+                onChooseModel = { onShowModelsChange(true) }
+            )
+        }
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (messages.isEmpty()) {
+                ChatEmptyState(onAsk = { q -> if (modelReady) controller.send(q) else input = q })
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close chat")
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Chat with your files", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            statusLine(status, model, modelReady),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    AssistChip(
-                        onClick = { showModels = true },
-                        label = { Text(model.shortName, maxLines = 1) },
-                        leadingIcon = { Icon(Icons.Default.Memory, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        modifier = Modifier.testTag("chat_model_chip")
-                    )
-                    IconButton(onClick = { controller.clear() }, enabled = messages.isNotEmpty()) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear chat")
+                    items(messages, key = { it.id }) { message ->
+                        if (message.fromUser) UserBubble(message) else AnswerBubble(message, onOpenSource)
                     }
                 }
-                HorizontalDivider()
+            }
+        }
 
-                focus?.let { (_, name) ->
-                    InputChip(
-                        selected = true,
-                        onClick = { controller.setFocusFile(null, null) },
-                        label = { Text("Only this file: $name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Ask about all files", modifier = Modifier.size(16.dp)) },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
+        // Input
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier.weight(1f).testTag("chat_input"),
+                placeholder = { Text(if (modelReady) "Ask about your documents…" else "Waiting for the model…") },
+                maxLines = 4,
+                shape = RoundedCornerShape(20.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            if (busy) {
+                IconButton(onClick = { controller.stop() }, modifier = Modifier.testTag("chat_stop")) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop answering", tint = MaterialTheme.colorScheme.error)
                 }
-
-                if (!modelReady) {
-                    ModelDownloadCard(
-                        model = model,
-                        state = downloads[model] ?: DownloadState.Idle,
-                        onDownload = { controller.download(model) },
-                        onCancel = { controller.cancelDownload(model) },
-                        onUseMobileData = { controller.setAllowMobileData(true) },
-                        onChooseModel = { showModels = true }
-                    )
-                }
-
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (messages.isEmpty()) {
-                        ChatEmptyState(onAsk = { q -> if (modelReady) controller.send(q) else input = q })
-                    } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(messages, key = { it.id }) { message ->
-                                if (message.fromUser) UserBubble(message) else AnswerBubble(message, onOpenSource)
-                            }
-                        }
-                    }
-                }
-
-                // Input
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            } else {
+                IconButton(
+                    onClick = {
+                        controller.send(input)
+                        input = ""
+                    },
+                    enabled = modelReady && input.isNotBlank(),
+                    modifier = Modifier.testTag("chat_send")
                 ) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        modifier = Modifier.weight(1f).testTag("chat_input"),
-                        placeholder = { Text(if (modelReady) "Ask about your documents…" else "Waiting for the model…") },
-                        maxLines = 4,
-                        shape = RoundedCornerShape(20.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    if (busy) {
-                        IconButton(onClick = { controller.stop() }, modifier = Modifier.testTag("chat_stop")) {
-                            Icon(Icons.Default.Stop, contentDescription = "Stop answering", tint = MaterialTheme.colorScheme.error)
-                        }
-                    } else {
-                        IconButton(
-                            onClick = {
-                                controller.send(input)
-                                input = ""
-                            },
-                            enabled = modelReady && input.isNotBlank(),
-                            modifier = Modifier.testTag("chat_send")
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
-                        }
-                    }
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         }
     }
 
     if (showModels) {
-        ChatModelSheet(controller = controller, onDismiss = { showModels = false })
+        ChatModelSheet(controller = controller, onDismiss = { onShowModelsChange(false) })
+    }
+}
+
+/** Shown instead of the conversation until something is indexed: chat can only answer from indexed files. */
+@Composable
+private fun IndexingRequiredCard(indexingActive: Boolean, onSetUpIndexing: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp).testTag("chat_indexing_required"),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(12.dp))
+        Text("Set up indexing first", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (indexingActive) {
+                "Your files are being indexed right now. Chat will unlock as soon as the first documents are ready."
+            } else {
+                "Chat answers come from your indexed documents, so your files need to be indexed before you can chat with them. " +
+                    "Pick a folder or add documents to get started."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onSetUpIndexing) { Text(if (indexingActive) "View indexing options" else "Set up indexing") }
     }
 }
 
@@ -266,9 +290,12 @@ private fun ModelDownloadCard(
                 }
                 is DownloadState.Waiting -> {
                     Text(
-                        if (state.retrying) "Connection lost, retrying soon…" else "Waiting for Wi-Fi to download.",
+                        if (state.retrying) "Download failed, retrying soon…" else "Waiting for Wi-Fi to download.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    state.lastError?.let {
+                        Text("Last error: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
                     Row {
                         TextButton(onClick = onUseMobileData) { Text("Use mobile data") }
                         TextButton(onClick = onCancel) { Text("Cancel") }
@@ -514,7 +541,11 @@ private fun ChatModelRow(
                 }
             }
             state is DownloadState.Waiting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (state.retrying) "Retrying soon…" else "Waiting for Wi-Fi", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                Text(
+                    if (state.retrying) "Retrying soon… ${state.lastError.orEmpty()}" else "Waiting for Wi-Fi",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f)
+                )
                 TextButton(onClick = onCancel) { Text("Cancel") }
             }
             else -> Row(verticalAlignment = Alignment.CenterVertically) {

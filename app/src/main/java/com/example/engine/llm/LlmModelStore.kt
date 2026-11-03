@@ -60,6 +60,15 @@ class LlmModelStore(context: Context) {
         get() = prefs.getBoolean(KEY_ALLOW_MOBILE_DATA, false)
         set(value) = prefs.edit().putBoolean(KEY_ALLOW_MOBILE_DATA, value).apply()
 
+    /** Why the last download attempt of [model] failed, so the UI can say more than "retrying". Null when fine. */
+    fun lastError(model: ChatModel): String? = prefs.getString("last_error_${model.id}", null)
+
+    fun setLastError(model: ChatModel, message: String?) {
+        prefs.edit().apply {
+            if (message == null) remove("last_error_${model.id}") else putString("last_error_${model.id}", message)
+        }.apply()
+    }
+
     // --- files ---
 
     private fun internalDir(model: ChatModel) = File(File(appContext.filesDir, ROOT), model.directory)
