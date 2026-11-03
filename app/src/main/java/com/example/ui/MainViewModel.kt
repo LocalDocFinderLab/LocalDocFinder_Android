@@ -1503,6 +1503,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (forceCheck) {
                         _dismissedUpdateCode.value = 0
                     }
+                    // Also raise a system notification, so the update isn't missed if the banner is never seen.
+                    if (forceCheck || result.info.versionCode > updatePreferences.config.value.dismissedVersionCode) {
+                        com.example.updater.worker.AppUpdateCheckWorker.notifyUpdateAvailable(
+                            getApplication(), result.info.versionCode, result.info.versionName,
+                            result.info.releaseTitle, result.info.formattedFileSize
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _updateCheckResult.value = UpdateCheckResult.Error(
