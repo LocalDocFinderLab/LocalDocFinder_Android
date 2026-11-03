@@ -44,7 +44,7 @@ class AppUpdateCheckWorker(
             if (result is UpdateCheckResult.UpdateAvailable) {
                 val info = result.info
                 if (info.versionCode > config.dismissedVersionCode) {
-                    showUpdateNotification(info.versionName, info.releaseTitle, info.formattedFileSize)
+                    notifyUpdateAvailable(context, info.versionCode, info.versionName, info.releaseTitle, info.formattedFileSize)
                 }
             }
             Result.success()
@@ -54,39 +54,6 @@ class AppUpdateCheckWorker(
         }
     }
 
-    private fun showUpdateNotification(versionName: String, title: String, fileSize: String) {
-        ensureNotificationChannel(context)
-
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_SHOW_UPDATE, true)
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            REQUEST_CODE_UPDATE_NOTIFICATION,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_UPDATE_ID)
-            .setSmallIcon(R.drawable.ic_localdoc_symbol)
-            .setContentTitle("New Version Available: v$versionName")
-            .setContentText("LocalDoc Finder $versionName is ready to download ($fileSize). Tap to update.")
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    "A new update ($title) is available with performance improvements and offline vector updates. Tap to download and install."
-                )
-            )
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .build()
-
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_UPDATE_ID, notification)
-    }
-
     companion object {
         private const val TAG = "AppUpdateCheckWorker"
         const val CHANNEL_UPDATE_ID = "app_update_notifications"
@@ -94,6 +61,59 @@ class AppUpdateCheckWorker(
         const val REQUEST_CODE_UPDATE_NOTIFICATION = 3003
         const val EXTRA_SHOW_UPDATE = "extra_show_in_app_update_sheet"
         const val WORK_NAME = "PeriodicAppUpdateCheck"
+        private const val KEY_NOTIFIED_VERSION = "pref_notified_version"
+
+        /**
+         * Posts the "new version" notification once per version (the in-app launch check and the background
+         * check both call this). Does nothing when the user has blocked notifications.
+         */
+        fun notifyUpdateAvailable(context: Context, versionCode: Int, versionName: String, title: String, fileSize: String) {
+            try {
+                if (!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                    Log.w(TAG, "Update v$versionName found but notifications are blocked for this app")
+                    return
+                }
+                val prefs = context.getSharedPreferences("app_update_prefs", Context.MODE_PRIVATE)
+                if (prefs.getInt(KEY_NOTIFIED_VERSION, 0) >= versionCode) return
+                showUpdateNotification(context, versionName, title, fileSize)
+                prefs.edit().putInt(KEY_NOTIFIED_VERSION, versionCode).apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not show update notification: ${e.message}")
+            }
+        }
+
+        private fun showUpdateNotification(context: Context, versionName: String, title: String, fileSize: String) {
+            ensureNotificationChannel(context)
+
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_SHOW_UPDATE, true)
+            }
+
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                REQUEST_CODE_UPDATE_NOTIFICATION,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_UPDATE_ID)
+                .setSmallIcon(R.drawable.ic_localdoc_symbol)
+                .setContentTitle("New Version Available: v$versionName")
+                .setContentText("LocalDoc Finder $versionName is ready to download ($fileSize). Tap to update.")
+                .setStyle(
+                    NotificationCompat.BigTextStyle().bigText(
+                        "A new update ($title) is available with performance improvements and offline vector updates. Tap to download and install."
+                    )
+                )
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.notify(NOTIFICATION_UPDATE_ID, notification)
+        }
 
         fun ensureNotificationChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -116,15 +136,15 @@ class AppUpdateCheckWorker(
                     .build()
 
                 val request = PeriodicWorkRequestBuilder<AppUpdateCheckWorker>(
-                    24, TimeUnit.HOURS,
-                    6, TimeUnit.HOURS
+                    6, TimeUnit.HOURS,
+                    2, TimeUnit.HOURS
                 )
                     .setConstraints(constraints)
                     .build()
 
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                     WORK_NAME,
-                    ExistingPeriodicWorkPolicy.KEEP,
+                    ExistingPeriodicWorkPolicy.UPDATE,
                     request
                 )
             } catch (e: Exception) {
